@@ -173,7 +173,7 @@
     return '<dl class="meta">' +
       '<dt>お名前</dt><dd>' + esc(r.name) + ' 様</dd>' +
       '<dt>ご注文番号</dt><dd>' + esc(r.order) + '</dd>' +
-      '<dt>引換内容（' + esc(r.qty) + '点）</dt><dd><ul>' + items + '</ul></dd></dl>';
+      '<dt>引換内容（' + esc(r.qtyLabel || (r.qty + '点')) + '）</dt><dd><ul>' + items + '</ul></dd></dl>';
   }
 
   function render(r) {

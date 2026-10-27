@@ -38,6 +38,7 @@ const CONFIG_ITEMS = [
   ['お問い合わせ先', 'info@narabrewing.com', 'お客様ページの下部に表示'],
   ['スキャン画面URL', 'https://narabrewing2018.github.io/nara-ticket/staff/', 'GitHub Pages のスキャン画面のURL。［URLを表示］のQRコードに使う。空ならApps Scriptのスキャン画面を使う'],
   ['WebアプリURL', '', 'デプロイ画面に表示されたウェブアプリのURL（…/exec）。カラーミー連携とURL表示に使う。空ならApps Scriptが返すURLを使う'],
+  ['1セットの本数', '', '引換券1枚（数量1）で渡す缶の本数（例: 2）。入れると画面に「3セット（缶6本）」と表示する。空なら「計 ○点」のまま'],
   ['バーコード表示', 'CODE128', 'CODE128（1次元バーコードのみ。NETUM NT-1228BC 等のCCDスキャナ用）／ QR+CODE128 ／ QR'],
 ];
 
@@ -126,10 +127,18 @@ function getConfig_() {
     eventInfo: get('引換日時・場所'),
     contact: get('お問い合わせ先'),
     barcode: (get('バーコード表示') || 'CODE128').toUpperCase(),
+    cansPerSet: Number(toHalf_(get('1セットの本数')).replace(/[^0-9]/g, '')) || 0,
     webAppUrl: get('WebアプリURL'),
     staffPageUrl: get('スキャン画面URL'),
   };
   return CONFIG_CACHE_;
+}
+
+/** 渡す数量の表示（「3セット（缶6本）」。1セットの本数が空なら「計 3点」） */
+function qtyLabel_(qty) {
+  const n = Number(qty) || 0;
+  const per = getConfig_().cansPerSet;
+  return per > 0 ? n + 'セット（缶' + (n * per) + '本）' : '計 ' + n + '点';
 }
 
 function props_() { return PropertiesService.getScriptProperties(); }
@@ -700,6 +709,7 @@ function lookupTicket(orderInput, mailInput) {
     name: v[COL.NAME],
     items: String(v[COL.ITEMS]).split(' / ').filter(String),
     qty: v[COL.QTY],
+    qtyLabel: qtyLabel_(v[COL.QTY]),
   };
   if (v[COL.STATUS] === STATUS.UNUSED) base.code = v[COL.CODE];
   if (v[COL.STATUS] === STATUS.USED) base.usedAt = fmt_(v[COL.USED_AT], 'M月d日 HH:mm');
@@ -742,6 +752,7 @@ function ticketView_(v) {
     name: v[COL.NAME],
     items: String(v[COL.ITEMS]).split(' / ').filter(String),
     qty: v[COL.QTY],
+    qtyLabel: qtyLabel_(v[COL.QTY]),
     status: v[COL.STATUS],
     usedAt: fmt_(v[COL.USED_AT], 'HH:mm:ss'),
     usedBy: v[COL.TERMINAL],
@@ -844,12 +855,12 @@ function buildPrintList() {
     .filter(function (r) { return r.v[COL.STATUS] === STATUS.UNUSED || r.v[COL.STATUS] === STATUS.USED; })
     .sort(function (a, b) { return Number(a.v[COL.ORDER]) - Number(b.v[COL.ORDER]); })
     .map(function (r) {
-      return ['□', r.v[COL.ORDER], r.v[COL.NAME], r.v[COL.ITEMS], r.v[COL.QTY],
+      return ['□', r.v[COL.ORDER], r.v[COL.NAME], r.v[COL.ITEMS], qtyLabel_(r.v[COL.QTY]),
         String(r.v[COL.CODE]).slice(-4), r.v[COL.STATUS] === STATUS.USED ? '済' : ''];
     });
   let sh = ss.getSheetByName(SHEET_PRINT);
   if (sh) sh.clear(); else sh = ss.insertSheet(SHEET_PRINT);
-  const head = [['済', '受注番号', '氏名', '引換内容', '点数', 'コード下4桁', '作成時点']];
+  const head = [['済', '受注番号', '氏名', '引換内容', '渡す数量', 'コード下4桁', '作成時点']];
   sh.getRange(1, 1, 1, 7).setValues(head).setFontWeight('bold').setBackground('#F5F3EE');
   if (rows.length) {
     sh.getRange(2, 2, rows.length, 1).setNumberFormat('@');
@@ -896,7 +907,7 @@ function offlineList_() {
     const used = v[COL.USED_AT] instanceof Date ? v[COL.USED_AT].getTime() : 0;
     return {
       c: v[COL.CODE], o: v[COL.ORDER], n: v[COL.NAME],
-      i: String(v[COL.ITEMS]).split(' / ').filter(String), q: v[COL.QTY],
+      i: String(v[COL.ITEMS]).split(' / ').filter(String), q: v[COL.QTY], ql: qtyLabel_(v[COL.QTY]),
       s: v[COL.STATUS], u: used, t: v[COL.TERMINAL],
     };
   });

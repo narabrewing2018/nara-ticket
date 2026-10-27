@@ -38,6 +38,7 @@
   .panel .verdict { font-size: 44px; font-weight: 900; line-height: 1.2; }
   .panel .why { font-size: 18px; margin-top: 6px; }
   .panel .items { font-size: 26px; font-weight: 700; margin: 16px 0 0; padding-left: 1.1em; line-height: 1.5; }
+  .panel .qty { font-size: 40px; font-weight: 900; margin-top: 14px; line-height: 1.2; }
   .panel .who { font-size: 16px; color: var(--muted); margin-top: 12px; }
   .panel.idle { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 18px; text-align: center; }
   .panel.ok { background: var(--ok-bg); border-color: var(--ok); }
@@ -295,8 +296,9 @@
   }
 
   function itemsHtml(t) {
-    return '<ul class="items">' + (t.items || []).map(function (i) { return '<li>' + esc(i) + '</li>'; }).join('') + '</ul>' +
-      '<div class="who">' + esc(t.name) + ' 様 ／ 受注番号 ' + esc(t.order) + ' ／ 計 ' + esc(t.qty) + '点</div>';
+    return '<div class="qty">' + esc(t.qtyLabel || ('計 ' + t.qty + '点')) + '</div>' +
+      '<ul class="items">' + (t.items || []).map(function (i) { return '<li>' + esc(i) + '</li>'; }).join('') + '</ul>' +
+      '<div class="who">' + esc(t.name) + ' 様 ／ 受注番号 ' + esc(t.order) + '</div>';
   }
 
   function showResult(r) {
@@ -318,7 +320,7 @@
     p.className = 'panel ' + cls;
     p.innerHTML = '<div class="verdict">' + esc(verdict) + '</div><div class="why">' + esc(why) + '</div>' + body;
     beep(kind);
-    addHist(tag, r.result === 'OK' ? (r.name + '：' + (r.items || []).join('、')) : verdict + (r.order ? '（' + r.order + '）' : ''), r.result === 'OK' ? r.code : null);
+    addHist(tag, r.result === 'OK' ? (r.name + '：' + (r.qtyLabel || (r.items || []).join('、'))) : verdict + (r.order ? '（' + r.order + '）' : ''), r.result === 'OK' ? r.code : null);
   }
 
   function showNetError(raw, err) {
@@ -380,7 +382,7 @@
       $('res').innerHTML = list.map(function (t) {
         var btn = t.status === '未使用' ? '<button class="small primary" data-code="' + esc(t.code) + '">引換する</button>' : '<span class="muted">' + esc(t.status) + (t.usedAt ? ' ' + esc(t.usedAt) : '') + '</span>';
         return '<li><div class="row"><b>' + esc(t.name) + ' 様</b>' + btn + '</div>' +
-          '<div class="muted">受注番号 ' + esc(t.order) + ' ／ ' + esc((t.items || []).join('、')) + '</div></li>';
+          '<div class="muted">受注番号 ' + esc(t.order) + ' ／ ' + esc(t.qtyLabel || (t.items || []).join('、')) + '</div></li>';
       }).join('');
     }).withFailureHandler(function (err) { $('res').innerHTML = '<li class="muted">エラー：' + esc(err.message) + '</li>'; })
       .searchTickets(BOOT.key, q);

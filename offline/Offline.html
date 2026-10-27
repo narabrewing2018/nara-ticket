@@ -58,6 +58,7 @@
   .panel .verdict { font-size: 38px; font-weight: 900; line-height: 1.2; margin-top: 6px; }
   .panel .why { font-size: 16px; margin-top: 4px; }
   .panel .items { font-size: 22px; font-weight: 700; margin: 12px 0 0; padding-left: 1.1em; line-height: 1.5; }
+  .panel .qty { font-size: 34px; font-weight: 900; margin-top: 12px; line-height: 1.2; }
   .panel .who { font-size: 15px; color: var(--muted); margin-top: 10px; overflow-wrap: anywhere; }
   .panel.idle { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 16px; text-align: center; }
   .panel.ok { background: var(--ok-bg); border-color: var(--ok); } .panel.ok .verdict { color: var(--ok); }
@@ -327,8 +328,9 @@
         '<div class="head"><span>' + hms(r.when) + '</span>' + (i === 0 ? '<span class="newest">最新</span>' : '<span>1つ前</span>') + '</div>' +
         '<div class="verdict">' + esc(r.verdict) + '</div>' +
         '<div class="why">' + r.why + '</div>' +
-        (r.t ? '<ul class="items">' + r.t.i.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' +
-          '<div class="who">' + esc(r.t.n) + ' 様 ／ 受注番号 ' + esc(r.t.o) + ' ／ 計 ' + esc(r.t.q) + '点</div>' : '');
+        (r.t ? '<div class="qty">' + esc(r.t.ql || ('計 ' + r.t.q + '点')) + '</div>' +
+          '<ul class="items">' + r.t.i.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' +
+          '<div class="who">' + esc(r.t.n) + ' 様 ／ 受注番号 ' + esc(r.t.o) + '</div>' : '');
     });
   }
 
@@ -383,7 +385,7 @@
     var code = e.target.getAttribute('data-code');
     if (!code) return;
     var t = byCode[code];
-    ask('この注文を引換済みにしますか？', '<p><b>' + esc(t.n) + ' 様</b>（受注番号 ' + esc(t.o) + '）<br>' + esc(t.i.join('、')) + '</p><p>注文受付メールや身分証でご本人を確認してから進めてください。</p>', '引換する', function () {
+    ask('この注文を引換済みにしますか？', '<p><b>' + esc(t.n) + ' 様</b>（受注番号 ' + esc(t.o) + '）<br>' + esc(t.ql || t.i.join('、')) + '</p><p>注文受付メールや身分証でご本人を確認してから進めてください。</p>', '引換する', function () {
       $('res').innerHTML = ''; $('q').value = '';
       check(code);
     });
@@ -436,12 +438,12 @@
 
   // ---------- CSV ----------
   function csv() {
-    var head = ['記録ID', '引換コード', '受注番号', '氏名', '引換内容', '点数', '引換時刻', '送信', '送信結果'];
+    var head = ['記録ID', '引換コード', '受注番号', '氏名', '引換内容', '渡す数量', '引換時刻', '送信', '送信結果'];
     var rows = recs.map(function (r) {
       var t = byCode[r.code] || { o: '', n: '', i: [], q: '' };
       var d = new Date(r.at);
       var when = d.getFullYear() + '/' + pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + ' ' + hms(r.at);
-      return [r.id, r.code, t.o, t.n, t.i.join(' / '), t.q, when, r.sent ? '済' : '未', r.result];
+      return [r.id, r.code, t.o, t.n, t.i.join(' / '), t.ql || t.q, when, r.sent ? '済' : '未', r.result];
     });
     var text = [head].concat(rows).map(function (row) {
       return row.map(function (v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(',');
