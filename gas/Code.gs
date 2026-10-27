@@ -36,6 +36,7 @@ const CONFIG_ITEMS = [
   ['イベント名', '', 'お客様ページとスキャン画面の見出し'],
   ['引換日時・場所', '', 'お客様ページに表示（例: 11月8日（日）10:00〜16:00 ／ 会場内 奈良醸造ブース）'],
   ['お問い合わせ先', 'info@narabrewing.com', 'お客様ページの下部に表示'],
+  ['WebアプリURL', '', 'デプロイ画面に表示されたウェブアプリのURL（…/exec）。カラーミー連携とURL表示に使う。空ならApps Scriptが返すURLを使う'],
   ['バーコード表示', 'CODE128', 'CODE128（1次元バーコードのみ。NETUM NT-1228BC 等のCCDスキャナ用）／ QR+CODE128 ／ QR'],
 ];
 
@@ -124,11 +125,19 @@ function getConfig_() {
     eventInfo: get('引換日時・場所'),
     contact: get('お問い合わせ先'),
     barcode: (get('バーコード表示') || 'CODE128').toUpperCase(),
+    webAppUrl: get('WebアプリURL'),
   };
   return CONFIG_CACHE_;
 }
 
 function props_() { return PropertiesService.getScriptProperties(); }
+
+/** ウェブアプリのURL。ScriptApp が別のデプロイのURLを返すことがあるため、「設定」シートの値を優先する */
+function webAppUrl_() {
+  const v = String(getConfig_().webAppUrl || '').trim();
+  if (/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(v)) return v;
+  return ScriptApp.getService().getUrl();
+}
 
 function now_() { return new Date(); }
 
@@ -479,7 +488,7 @@ function disableAutoSync(silent) {
 function colormeConnect() {
   const ui = SpreadsheetApp.getUi();
   const p = props_();
-  const url = ScriptApp.getService().getUrl();
+  const url = webAppUrl_();
   if (!url) { ui.alert('先にWebアプリとしてデプロイしてください（手順書の手順3）。'); return; }
 
   const id = ui.prompt('カラーミー連携 1/2', 'クライアントID を貼り付けてください', ui.ButtonSet.OK_CANCEL);
@@ -586,7 +595,7 @@ function resetStaffKey() {
 }
 
 function showUrls() {
-  const url = ScriptApp.getService().getUrl();
+  const url = webAppUrl_();
   if (!url) { SpreadsheetApp.getUi().alert('先にWebアプリとしてデプロイしてください。'); return; }
   const k = staffKey_();
   const esc = function (s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;'); };
