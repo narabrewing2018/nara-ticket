@@ -36,6 +36,7 @@ const CONFIG_ITEMS = [
   ['イベント名', '', 'お客様ページとスキャン画面の見出し'],
   ['引換日時・場所', '', 'お客様ページに表示（例: 11月8日（日）10:00〜16:00 ／ 会場内 奈良醸造ブース）'],
   ['お問い合わせ先', 'info@narabrewing.com', 'お客様ページの下部に表示'],
+  ['スキャン画面URL', 'https://narabrewing2018.github.io/nara-ticket/staff/', 'GitHub Pages のスキャン画面のURL。［URLを表示］のQRコードに使う。空ならApps Scriptのスキャン画面を使う'],
   ['WebアプリURL', '', 'デプロイ画面に表示されたウェブアプリのURL（…/exec）。カラーミー連携とURL表示に使う。空ならApps Scriptが返すURLを使う'],
   ['バーコード表示', 'CODE128', 'CODE128（1次元バーコードのみ。NETUM NT-1228BC 等のCCDスキャナ用）／ QR+CODE128 ／ QR'],
 ];
@@ -126,6 +127,7 @@ function getConfig_() {
     contact: get('お問い合わせ先'),
     barcode: (get('バーコード表示') || 'CODE128').toUpperCase(),
     webAppUrl: get('WebアプリURL'),
+    staffPageUrl: get('スキャン画面URL'),
   };
   return CONFIG_CACHE_;
 }
@@ -615,9 +617,9 @@ function showUrls() {
     '<p class="warn"><b>スタッフ専用です。外部に出さないでください。</b></p>' +
     '<p>スマホのカメラでQRコードを読むと、その端末用のスキャン画面が開きます。</p>' +
     '<div class="qs">' +
-    qr('端末A', url + '?p=staff&k=' + k + '&t=A') +
-    qr('端末B', url + '?p=staff&k=' + k + '&t=B') +
-    qr('端末C', url + '?p=staff&k=' + k + '&t=C') +
+    qr('端末A', staffUrl_(url, k, 'A')) +
+    qr('端末B', staffUrl_(url, k, 'B')) +
+    qr('端末C', staffUrl_(url, k, 'C')) +
     '</div>' +
     row('オフライン照合の設定用（PCの「オフライン照合」に一度だけ貼る）', url + '?p=offline&k=' + k) +
     row('Apps ScriptのURL（GitHubの引換券ページ index.html の GAS_URL に貼る）', url) +
@@ -640,6 +642,7 @@ function doGet(e) {
   if (p.code && !p.p) return handleOAuthCallback_(p.code);
   if (p.p === 'offline_list' || p.p === 'offline_push') return offlineApi_(p);
   if (p.p === 'ticket_lookup') return ticketApi_(p);
+  if (p.p === 'staff_api') return staffApi_(p);
 
   const cfg = getConfig_();
   if (p.p === 'staff') {
@@ -969,4 +972,37 @@ function ticketApi_(p) {
   catch (err) { console.error(err); body = { ok: false, message: 'ただいま混み合っています。少し時間をおいてお試しください。' }; }
   return ContentService.createTextOutput(cb + '(' + JSON.stringify(body) + ');')
     .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
+
+
+// ===================== GitHub Pages のスキャン画面用 =====================
+//   ?p=staff_api&fn=関数名&a=[引数のJSON配列]&cb=関数名 → Staff.html と同じ関数を JSONP で呼ぶ
+//   合言葉は引数の1つめ（各関数の中で確認する）
+
+const STAFF_API_FNS = { redeem: redeem, undoRedeem: undoRedeem, searchTickets: searchTickets, getStats: getStats };
+
+function staffApi_(p) {
+  const cb = String(p.cb || '');
+  if (!/^[A-Za-z_$][\w$]{0,40}$/.test(cb)) {
+    return ContentService.createTextOutput('// bad callback').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  let body;
+  try {
+    const fn = STAFF_API_FNS[String(p.fn || '')];
+    if (!fn) throw new Error('不明な操作です。');
+    const args = JSON.parse(String(p.a || '[]'));
+    if (!Array.isArray(args) || args.length > 4) throw new Error('引数が正しくありません。');
+    body = { ok: true, result: fn.apply(null, args) };
+  } catch (err) {
+    body = { ok: false, message: String(err && err.message || err) };
+  }
+  return ContentService.createTextOutput(cb + '(' + JSON.stringify(body) + ');')
+    .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
+
+/** スキャン画面のURL（設定があれば GitHub Pages、なければ Apps Script） */
+function staffUrl_(url, k, t) {
+  const base = String(getConfig_().staffPageUrl || '').trim();
+  if (/^https:\/\//.test(base)) return base + (base.indexOf('?') >= 0 ? '&' : '?') + 'k=' + encodeURIComponent(k) + '&t=' + t;
+  return url + '?p=staff&k=' + k + '&t=' + t;
 }

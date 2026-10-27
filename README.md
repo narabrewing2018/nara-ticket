@@ -24,5 +24,6 @@
 | 場所 | 中身 |
 |---|---|
 | `index.html` | お客様用の引換券ページ（GitHub Pages で公開） |
+| `staff/index.html` | スタッフ用のスキャン画面。管理シートの［URLを表示］のQRコード（合言葉つき）から開く。合言葉はリポジトリに含まない |
 | `gas/` | 管理用スプレッドシートの Apps Script（Code.gs・Staff.html・Ticket.html）。合言葉やトークンは含まない（実行時に Google 側へ保存） |
 | `offline/Offline.html` | Wi-Fi が使えないとき用のオフライン照合ページ（PC に保存して開く） |
