@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>オフライン照合</title>
+<!--
+  奈良醸造 イベント引換券 オフライン照合（Wi-Fiが使えないとき用）
+  ・Windows PC の Chrome / Edge でこのファイルを開いて使う（インストール不要）
+  ・ネットにつながっている間は3分ごとに最新の一覧を自動で取り込む
+  ・オフライン中の引換はこのPCのブラウザ内に記録し、復旧後［記録を送信］で管理シートに反映する
+  ・PCに持つ情報：引換コード・受注番号・氏名・引換内容・点数・状態（メール・住所・電話は持たない）
+-->
+<style>
+  :root {
+    --bg: #F5F3EE; --ink: #1E1E22; --muted: #6B6A66; --line: #DDD9CF; --panel: #FFFFFF;
+    --ok: #1F7A3A; --ok-bg: #E3F2E7; --ng: #B0463B; --ng-bg: #F8E2DF; --warn: #9A6500; --warn-bg: #FBEFD5;
+    --off: #3A4A8C; --off-bg: #E6E9F5;
+    --font: "Yu Gothic UI", "Yu Gothic", "Meiryo", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    --mono: Consolas, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 16px; }
+  .hidden { display: none !important; }
+
+  .top { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; padding: 10px 16px; background: var(--ink); color: #fff; }
+  .top .title { font-weight: 700; font-size: 16px; flex: 1; min-width: 200px; }
+  .pill { font-size: 13px; border-radius: 999px; padding: 4px 12px; font-weight: 700; white-space: nowrap; }
+  .pill.on { background: var(--ok-bg); color: var(--ok); }
+  .pill.off { background: #FFE3A3; color: #6B4500; }
+  .pill.none { background: #fff; color: var(--ng); }
+  .stats { font-size: 13px; opacity: .92; font-variant-numeric: tabular-nums; }
+  .stats b { font-size: 16px; }
+
+  .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); font-size: 13.5px; }
+  .bar .grow { flex: 1; min-width: 160px; color: var(--muted); }
+  .bar .unsent { font-weight: 700; }
+  .bar .unsent.has { color: var(--off); }
+
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 16px; padding: 16px; max-width: 1280px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+
+  .scanbox { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .scanbox label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px; }
+  #scan { width: 100%; font-size: 26px; padding: 10px 12px; border: 2px solid var(--line); border-radius: 10px; font-family: var(--mono); letter-spacing: .06em; }
+  #scan:focus { outline: none; border-color: var(--ink); }
+  .ready { font-size: 13px; margin-top: 6px; color: var(--muted); }
+  .ready.on::before { content: "●"; color: var(--ok); margin-right: 4px; }
+  .ready.off::before { content: "●"; color: var(--ng); margin-right: 4px; }
+
+  /* 直近2件を並べる（スキャナ2台用） */
+  .panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+  @media (max-width: 700px) { .panels { grid-template-columns: minmax(0, 1fr); } }
+  .panel { border-radius: 16px; padding: 18px; min-height: 250px; border: 3px solid var(--line); background: var(--panel); min-width: 0; }
+  .panel .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .panel .newest { background: var(--ink); color: #fff; border-radius: 4px; padding: 1px 8px; font-weight: 700; font-size: 12px; }
+  .panel .verdict { font-size: 38px; font-weight: 900; line-height: 1.2; margin-top: 6px; }
+  .panel .why { font-size: 16px; margin-top: 4px; }
+  .panel .items { font-size: 22px; font-weight: 700; margin: 12px 0 0; padding-left: 1.1em; line-height: 1.5; }
+  .panel .who { font-size: 15px; color: var(--muted); margin-top: 10px; overflow-wrap: anywhere; }
+  .panel.idle { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 16px; text-align: center; }
+  .panel.ok { background: var(--ok-bg); border-color: var(--ok); } .panel.ok .verdict { color: var(--ok); }
+  .panel.ng { background: var(--ng-bg); border-color: var(--ng); } .panel.ng .verdict { color: var(--ng); }
+  .panel.warn { background: var(--warn-bg); border-color: var(--warn); } .panel.warn .verdict { color: var(--warn); }
+  .panel.old { opacity: .62; }
+
+  aside { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .box h2 { font-size: 14px; margin: 0 0 10px; }
+  .search { display: flex; gap: 8px; }
+  .search input { flex: 1; min-width: 0; font-size: 15px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-family: inherit; }
+  .list { list-style: none; margin: 10px 0 0; padding: 0; font-size: 13.5px; max-height: 340px; overflow: auto; }
+  .list li { border-top: 1px solid var(--line); padding: 7px 0; }
+  .list li:first-child { border-top: 0; }
+  .row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .muted { color: var(--muted); font-size: 12.5px; }
+  .tag { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 1px 6px; color: #fff; white-space: nowrap; }
+  .tag.OK { background: var(--ok); } .tag.NG { background: var(--ng); } .tag.WARN { background: var(--warn); } .tag.SENT { background: var(--off); }
+  .hist .t { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .hist .d { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 6px 12px; }
+  button:focus-visible { outline: 2px solid var(--off); outline-offset: 2px; }
+  button.primary { background: var(--ink); color: #fff; border-color: var(--ink); font-weight: 700; }
+  button.send { background: var(--off); color: #fff; border-color: var(--off); font-weight: 700; }
+  button.danger { color: var(--ng); border-color: var(--ng); }
+  button.small { font-size: 12px; padding: 3px 8px; }
+  button:disabled { opacity: .45; cursor: default; }
+
+  .overlay { position: fixed; inset: 0; background: rgba(30,30,34,.86); display: flex; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
+  .overlay .inner { background: var(--panel); border-radius: 16px; padding: 24px; width: min(560px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
+  .overlay h1 { font-size: 20px; margin: 0 0 10px; }
+  .overlay p { margin: 8px 0; line-height: 1.6; font-size: 14.5px; }
+  .overlay input[type=text] { width: 100%; font-size: 14px; padding: 10px; margin: 8px 0; border: 1px solid var(--line); border-radius: 8px; font-family: var(--mono); }
+  .overlay .btns { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 14px; }
+  .overlay .btns button { padding: 10px 16px; }
+  .err { color: var(--ng); font-weight: 700; }
+  table.sum { border-collapse: collapse; width: 100%; font-size: 13.5px; margin-top: 8px; }
+  table.sum td, table.sum th { border-bottom: 1px solid var(--line); padding: 5px 6px; text-align: left; }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="title" id="title">オフライン照合</div>
+  <div class="stats" id="stats">一覧なし</div>
+  <div class="pill none" id="conn">未接続</div>
+</div>
+
+<div class="bar">
+  <span class="grow" id="listInfo">一覧をまだ取り込んでいません</span>
+  <button class="small" id="refreshBtn" type="button">今すぐ一覧を更新</button>
+  <span class="unsent" id="unsent">未送信 0件</span>
+  <button class="send small" id="sendBtn" type="button" disabled>記録を送信</button>
+  <button class="small" id="csvBtn" type="button">CSVで書き出す</button>
+  <button class="small" id="setupBtn" type="button">設定</button>
+  <button class="small danger" id="eraseBtn" type="button">データを消去</button>
+</div>
+
+<main>
+  <section>
+    <div class="scanbox">
+      <label for="scan">ここにスキャン（スキャナ2台まで。カーソルが入っている状態で読み取ってください）</label>
+      <input id="scan" autocomplete="off" spellcheck="false" lang="en">
+      <div class="ready off" id="ready">準備中</div>
+    </div>
+    <div class="panels">
+      <div class="panel idle" id="p0">バーコードを読み取ると、ここに結果が出ます</div>
+      <div class="panel idle" id="p1">1つ前の結果</div>
+    </div>
+  </section>
+
+  <aside>
+    <div class="box">
+      <h2>手入力で探す（読み取れない時）</h2>
+      <div class="search">
+        <input id="q" placeholder="受注番号・氏名・コード" autocomplete="off">
+        <button class="primary" id="qBtn" type="button">検索</button>
+      </div>
+      <ul class="list" id="res"></ul>
+    </div>
+    <div class="box">
+      <h2>このPCの引換記録</h2>
+      <ul class="list hist" id="hist"><li class="muted">まだありません</li></ul>
+    </div>
+  </aside>
+</main>
+
+<!-- 初回設定 -->
+<div class="overlay hidden" id="setup">
+  <div class="inner">
+    <h1>オフライン照合の設定</h1>
+    <p>管理シートの［引換券システム］→［URLを表示］にある<b>「オフライン照合の設定用」</b>のURLを貼り付けてください。</p>
+    <input type="text" id="setupUrl" placeholder="https://script.google.com/macros/s/…/exec?p=offline&amp;k=…">
+    <p class="err hidden" id="setupErr"></p>
+    <div class="btns">
+      <button type="button" id="setupCancel">閉じる</button>
+      <button type="button" class="primary" id="setupSave">保存して一覧を取り込む</button>
+    </div>
+  </div>
+</div>
+
+<!-- 開始（音を鳴らすために一度押す） -->
+<div class="overlay hidden" id="start">
+  <div class="inner" style="text-align:center">
+    <h1>オフライン照合を開始</h1>
+    <p id="startInfo"></p>
+    <div class="btns" style="justify-content:center"><button type="button" class="primary" id="startBtn" style="font-size:18px;padding:14px 40px">開始する</button></div>
+    <p class="muted">開始すると音が鳴るようになります。入力モードは「半角英数」にしてください。</p>
+  </div>
+</div>
+
+<!-- 確認・お知らせ（ブラウザの確認ダイアログは使わない） -->
+<div class="overlay hidden" id="dlg">
+  <div class="inner">
+    <h1 id="dlgTitle"></h1>
+    <div id="dlgBody"></div>
+    <div class="btns" id="dlgBtns"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var CODE_LEN = 12;
+  var REFRESH_MS = 3 * 60 * 1000;   // 一覧の自動更新：3分ごと
+  var TIMEOUT_MS = 15000;
+  var K_CFG = 'nara_off_cfg', K_LIST = 'nara_off_list', K_RECS = 'nara_off_recs';
+
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function toHalf(s) { return String(s || '').replace(/[！-～]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); }).replace(/　/g, ' '); }
+  function digits(s) { return toHalf(s).replace(/\D/g, ''); }
+  function pad(n) { return ('0' + n).slice(-2); }
+  function hms(ms) { var d = new Date(ms); return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()); }
+  function hm(ms) { var d = new Date(ms); return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+
+  // ---------- 保存（このPCのブラウザ内） ----------
+  function load(k, def) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch (e) { return def; } }
+  function save(k, v) {
+    try { localStorage.setItem(k, JSON.stringify(v)); return true; }
+    catch (e) { notice('保存できませんでした', '<p>ブラウザに記録を保存できませんでした。［CSVで書き出す］で記録を残してください。</p>'); return false; }
+  }
+  var cfg = load(K_CFG, null);          // { base, k }
+  var list = load(K_LIST, null);        // { at, eventName, tickets:[{c,o,n,i,q,s,u,t}] }
+  var recs = load(K_RECS, []);          // [{ id, code, at, sent, result }]
+  var byCode = {};
+  function index() { byCode = {}; (list ? list.tickets : []).forEach(function (t) { byCode[t.c] = t; }); }
+  index();
+
+  // ---------- 通信（JSONP。ファイルから開いても届くように <script> で読み込む） ----------
+  var seq = 0;
+  function jsonp(params) {
+    if (window.OFFLINE_TRANSPORT) return window.OFFLINE_TRANSPORT(params);   // プレビュー用
+    return new Promise(function (resolve, reject) {
+      if (!cfg) return reject(new Error('NOCFG'));
+      var cb = '__nara_cb' + (++seq) + '_' + Date.now();
+      var s = document.createElement('script');
+      var timer = setTimeout(function () { done(); reject(new Error('TIMEOUT')); }, TIMEOUT_MS);
+      function done() { clearTimeout(timer); try { delete window[cb]; } catch (e) { window[cb] = undefined; } if (s.parentNode) s.parentNode.removeChild(s); }
+      window[cb] = function (data) { done(); resolve(data); };
+      s.onerror = function () { done(); reject(new Error('NETWORK')); };
+      var q = Object.keys(params).map(function (k) { return k + '=' + encodeURIComponent(params[k]); }).join('&');
+      s.src = cfg.base + '?' + q + '&k=' + encodeURIComponent(cfg.k) + '&cb=' + cb + '&_=' + Date.now();
+      document.head.appendChild(s);
+    });
+  }
+
+  // ---------- 接続状態 ----------
+  var online = null, lastErr = '';
+  function setConn(ok, err) {
+    online = ok; lastErr = err || '';
+    var c = $('conn');
+    if (!cfg) { c.className = 'pill none'; c.textContent = '未設定'; }
+    else if (ok === null) { c.className = 'pill none'; c.textContent = '接続を確認中'; }
+    else if (ok) { c.className = 'pill on'; c.textContent = 'オンライン'; }
+    else { c.className = 'pill off'; c.textContent = 'オフライン（手元の一覧で照合中）'; }
+    renderBar();
+  }
+
+  // ---------- 一覧の取り込み ----------
+  var refreshing = false;
+  function refresh(manual) {
+    if (!cfg || refreshing) return Promise.resolve();
+    refreshing = true;
+    $('refreshBtn').disabled = true;
+    return jsonp({ p: 'offline_list' }).then(function (d) {
+      if (!d || !d.ok) {
+        setConn(true);
+        if (manual || (d && d.error === 'KEY')) notice('一覧を取り込めませんでした', '<p>' + esc(d && d.message || '不明なエラー') + '</p>');
+        return;
+      }
+      list = { at: d.at, eventName: d.eventName || '', tickets: d.tickets || [] };
+      save(K_LIST, list); index(); setConn(true); renderAll();
+    }).catch(function (e) {
+      setConn(false, e.message);
+      if (manual) notice('ネットにつながっていません', '<p>手元の一覧' + (list ? '（' + hm(list.at) + ' 時点）' : '') + 'で照合を続けられます。</p>');
+    }).then(function () { refreshing = false; $('refreshBtn').disabled = false; });
+  }
+  setInterval(function () { refresh(false); }, REFRESH_MS);
+
+  // ---------- 状態（取り込んだ一覧＋このPCの未送信の記録） ----------
+  function localRec(code) {
+    for (var i = recs.length - 1; i >= 0; i--) if (recs[i].code === code) return recs[i];
+    return null;
+  }
+  function effective(t) {
+    var r = localRec(t.c);
+    if (r && !r.sent) return { s: '引換済', u: r.at, t: 'このPC（未送信）' };
+    return { s: t.s, u: t.u, t: t.t };
+  }
+
+  // ---------- 音 ----------
+  var audio = null;
+  function beep(kind) {
+    if (!audio) return;
+    try {
+      var sq = kind === 'ok' ? [[1320, 0.12]] : kind === 'warn' ? [[660, 0.18], [660, 0.18]] : [[220, 0.35], [180, 0.35]];
+      var t = audio.currentTime;
+      sq.forEach(function (s) {
+        var o = audio.createOscillator(), g = audio.createGain();
+        o.type = kind === 'ok' ? 'sine' : 'square'; o.frequency.value = s[0];
+        g.gain.setValueAtTime(0.25, t); g.gain.exponentialRampToValueAtTime(0.001, t + s[1]);
+        o.connect(g); g.connect(audio.destination); o.start(t); o.stop(t + s[1]); t += s[1] + 0.06;
+      });
+    } catch (e) {}
+  }
+
+  // ---------- 照合 ----------
+  function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+  function check(raw) {
+    var code = digits(raw);
+    if (code.length !== CODE_LEN) return show({ cls: 'ng', verdict: '読み取りエラー', why: 'もう一度読み取ってください（' + esc(String(raw).slice(0, 24)) + '）', beep: 'ng' });
+    if (!list) return show({ cls: 'ng', verdict: '一覧がありません', why: 'ネットにつないで一覧を取り込んでください。それまでは紙の当日リストで照合します。', beep: 'ng' });
+    var t = byCode[code];
+    if (!t) return show({ cls: 'ng', verdict: '見つかりません', why: '手元の一覧（' + hm(list.at) + ' 時点）にない引換券です。それ以降のご注文の可能性があります。注文受付メールを見せていただき、責任者が判断してください。', beep: 'ng', code: code });
+    var e = effective(t);
+    if (e.s === '未使用') {
+      var r = { id: newId(), code: code, at: Date.now(), sent: false, result: '' };
+      recs.push(r);
+      if (!save(K_RECS, recs)) { recs.pop(); return show({ cls: 'ng', verdict: '記録できません', why: 'この券はまだ渡さないでください。', beep: 'ng' }); }
+      renderBar(); renderStats();
+      return show({ cls: 'ok', verdict: '引換OK', why: '下の商品をお渡しください', t: t, beep: 'ok', at: r.at, rec: r });
+    }
+    if (e.s === '引換済') return show({ cls: 'ng', verdict: '引換済みです', why: (e.u ? hms(e.u) + ' に' : '') + (e.t || '') + ' で引換済み。お渡ししないでください。', t: t, beep: 'ng' });
+    if (e.s === '入金待ち') return show({ cls: 'warn', verdict: '未入金です', why: 'お支払いが確認できていません。責任者が判断してください。', t: t, beep: 'warn' });
+    return show({ cls: 'ng', verdict: '無効な引換券', why: 'ご注文がキャンセルされています。', t: t, beep: 'ng' });
+  }
+
+  // 直近2件を並べる。新しい結果が左、1つ前が右。
+  var shown = [];
+  function show(r) {
+    r.when = Date.now();
+    shown.unshift(r); shown = shown.slice(0, 2);
+    beep(r.beep);
+    renderPanels();
+    if (r.rec || r.cls !== 'ok') addHist(r);
+  }
+  function renderPanels() {
+    ['p0', 'p1'].forEach(function (id, i) {
+      var r = shown[i], el = $(id);
+      if (!r) return;
+      el.className = 'panel ' + r.cls + (i === 1 ? ' old' : '');
+      el.innerHTML =
+        '<div class="head"><span>' + hms(r.when) + '</span>' + (i === 0 ? '<span class="newest">最新</span>' : '<span>1つ前</span>') + '</div>' +
+        '<div class="verdict">' + esc(r.verdict) + '</div>' +
+        '<div class="why">' + r.why + '</div>' +
+        (r.t ? '<ul class="items">' + r.t.i.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' +
+          '<div class="who">' + esc(r.t.n) + ' 様 ／ 受注番号 ' + esc(r.t.o) + ' ／ 計 ' + esc(r.t.q) + '点</div>' : '');
+    });
+  }
+
+  // ---------- 履歴（このPCの記録） ----------
+  var hist = [];
+  function addHist(r) {
+    hist.unshift({ when: r.when, cls: r.cls, text: r.t ? r.t.n + '：' + r.t.i.join('、') : r.verdict + (r.code ? '（' + r.code + '）' : ''), rec: r.rec || null, verdict: r.verdict });
+    hist = hist.slice(0, 50);
+    renderHist();
+  }
+  function renderHist() {
+    if (!hist.length) { $('hist').innerHTML = '<li class="muted">まだありません</li>'; return; }
+    $('hist').innerHTML = hist.map(function (h, i) {
+      var tag = h.cls === 'ok' ? (h.rec && h.rec.sent ? '<span class="tag SENT">送信済</span>' : '<span class="tag OK">OK</span>')
+        : h.cls === 'warn' ? '<span class="tag WARN">要確認</span>' : '<span class="tag NG">NG</span>';
+      var undo = h.rec && !h.rec.sent && !h.rec.undone ? '<button class="small" data-undo="' + i + '" type="button">取消</button>' : (h.rec && h.rec.undone ? '<span class="muted">取消済</span>' : '');
+      return '<li class="row"><span class="t">' + hms(h.when) + '</span>' + tag + '<span class="d" title="' + esc(h.text) + '">' + esc(h.text) + '</span>' + undo + '</li>';
+    }).join('');
+  }
+  $('hist').addEventListener('click', function (e) {
+    var i = e.target.getAttribute('data-undo');
+    if (i == null) return;
+    var h = hist[Number(i)];
+    ask('この引換を取り消しますか？', '<p>' + esc(h.text) + '</p><p>取り消すと「未使用」に戻り、送信もされません。</p>', '取り消す', function () {
+      recs = recs.filter(function (r) { return r.id !== h.rec.id; });
+      save(K_RECS, recs);
+      h.rec.undone = true;
+      renderHist(); renderBar(); renderStats();
+    });
+  });
+
+  // ---------- 手入力検索 ----------
+  function search() {
+    var q = toHalf($('q').value).trim().toLowerCase().replace(/\s/g, '');
+    if (!list || q.length < 2) { $('res').innerHTML = q.length ? '<li class="muted">2文字以上入力してください</li>' : ''; return; }
+    var d = q.replace(/\D/g, '');
+    var hits = list.tickets.filter(function (t) {
+      if (d.length >= 4 && (t.o === d || t.c === d || t.c.slice(-4) === d)) return true;
+      return String(t.n).toLowerCase().replace(/\s/g, '').indexOf(q) >= 0;
+    }).slice(0, 20);
+    if (!hits.length) { $('res').innerHTML = '<li class="muted">見つかりません</li>'; return; }
+    $('res').innerHTML = hits.map(function (t) {
+      var e = effective(t);
+      var btn = e.s === '未使用' ? '<button class="small primary" data-code="' + esc(t.c) + '" type="button">引換する</button>'
+        : '<span class="muted">' + esc(e.s) + (e.u ? ' ' + hm(e.u) : '') + '</span>';
+      return '<li><div class="row"><b>' + esc(t.n) + ' 様</b>' + btn + '</div><div class="muted">受注番号 ' + esc(t.o) + ' ／ ' + esc(t.i.join('、')) + '</div></li>';
+    }).join('');
+  }
+  $('qBtn').addEventListener('click', search);
+  $('q').addEventListener('keydown', function (e) { if (e.key === 'Enter') search(); });
+  $('res').addEventListener('click', function (e) {
+    var code = e.target.getAttribute('data-code');
+    if (!code) return;
+    var t = byCode[code];
+    ask('この注文を引換済みにしますか？', '<p><b>' + esc(t.n) + ' 様</b>（受注番号 ' + esc(t.o) + '）<br>' + esc(t.i.join('、')) + '</p><p>注文受付メールや身分証でご本人を確認してから進めてください。</p>', '引換する', function () {
+      $('res').innerHTML = ''; $('q').value = '';
+      check(code);
+    });
+  });
+
+  // ---------- 送信 ----------
+  var sending = false;
+  function sendAll() {
+    var pending = recs.filter(function (r) { return !r.sent; });
+    if (!pending.length || sending) return;
+    sending = true; $('sendBtn').disabled = true; $('sendBtn').textContent = '送信中…';
+    var chunks = [];
+    for (var i = 0; i < pending.length; i += 40) chunks.push(pending.slice(i, i + 40));
+    var results = [];
+    var chain = Promise.resolve();
+    chunks.forEach(function (ch) {
+      chain = chain.then(function () {
+        var r = ch.map(function (x) { return x.code + '.' + Math.floor(x.at / 1000) + '.' + x.id; }).join(',');
+        return jsonp({ p: 'offline_push', r: r }).then(function (d) {
+          if (!d || !d.ok) throw new Error(d && d.message || '送信に失敗しました');
+          d.results.forEach(function (x) {
+            var rec = recs.filter(function (y) { return y.id === x.id; })[0];
+            if (rec) { rec.sent = true; rec.result = x.result; }
+            results.push(x);
+          });
+          save(K_RECS, recs);
+        });
+      });
+    });
+    chain.then(function () {
+      setConn(true);
+      var label = { applied: '反映しました', already: '送信済みでした', conflict: '二重引換の可能性', unusable: '入金待ち・無効の券', not_found: '管理シートにない' };
+      var count = {}; results.forEach(function (x) { count[x.result] = (count[x.result] || 0) + 1; });
+      var issues = results.filter(function (x) { return x.result === 'conflict' || x.result === 'unusable' || x.result === 'not_found'; });
+      var body = '<table class="sum">' + Object.keys(count).map(function (k) { return '<tr><td>' + esc(label[k] || k) + '</td><td><b>' + count[k] + '件</b></td></tr>'; }).join('') + '</table>';
+      if (issues.length) {
+        body += '<p class="err">確認が必要な記録があります。管理シートの備考にも記録しました。</p><table class="sum"><tr><th>結果</th><th>受注番号</th><th>氏名</th></tr>' +
+          issues.map(function (x) { return '<tr><td>' + esc(label[x.result]) + '</td><td>' + esc(x.order || x.code) + '</td><td>' + esc(x.name || '') + '</td></tr>'; }).join('') + '</table>';
+      }
+      notice('記録を送信しました', body);
+      return refresh(false);
+    }).catch(function (e) {
+      setConn(false, e.message);
+      notice('送信できませんでした', '<p>ネットにつながってから、もう一度［記録を送信］を押してください。送信できた分は二重に反映されません。</p><p class="muted">' + esc(e.message) + '</p>');
+    }).then(function () {
+      sending = false; $('sendBtn').textContent = '記録を送信'; renderBar(); renderHist();
+    });
+  }
+  $('sendBtn').addEventListener('click', sendAll);
+
+  // ---------- CSV ----------
+  function csv() {
+    var head = ['記録ID', '引換コード', '受注番号', '氏名', '引換内容', '点数', '引換時刻', '送信', '送信結果'];
+    var rows = recs.map(function (r) {
+      var t = byCode[r.code] || { o: '', n: '', i: [], q: '' };
+      var d = new Date(r.at);
+      var when = d.getFullYear() + '/' + pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + ' ' + hms(r.at);
+      return [r.id, r.code, t.o, t.n, t.i.join(' / '), t.q, when, r.sent ? '済' : '未', r.result];
+    });
+    var text = [head].concat(rows).map(function (row) {
+      return row.map(function (v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(',');
+    }).join('\r\n');
+    var blob = new Blob(['﻿' + text], { type: 'text/csv' });
+    var a = document.createElement('a');
+    var d = new Date();
+    a.href = URL.createObjectURL(blob);
+    a.download = 'オフライン引換記録_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+  }
+  $('csvBtn').addEventListener('click', function () {
+    if (!recs.length) { notice('記録がありません', '<p>このPCにはまだ引換記録がありません。</p>'); return; }
+    csv();
+  });
+
+  // ---------- データを消去 ----------
+  $('eraseBtn').addEventListener('click', function () {
+    var unsent = recs.filter(function (r) { return !r.sent; }).length;
+    var body = '<p>このPCに保存した一覧（氏名を含む）、引換記録、設定をすべて消します。</p>' +
+      (unsent ? '<p class="err">未送信の記録が ' + unsent + '件 あります。消すと管理シートに反映できなくなります。先に［記録を送信］してください。</p>' : '<p>記録はすべて送信済みです。</p>') +
+      '<p class="muted">書き出したCSVファイルは、このボタンでは消えません。別に削除してください。</p>';
+    ask('データを消去しますか？', body, unsent ? '未送信のまま消去する' : '消去する', function () {
+      try { localStorage.removeItem(K_LIST); localStorage.removeItem(K_RECS); localStorage.removeItem(K_CFG); } catch (e) {}
+      cfg = null; list = null; recs = []; hist = []; shown = []; index();
+      $('p0').className = 'panel idle'; $('p0').textContent = 'データを消去しました';
+      $('p1').className = 'panel idle'; $('p1').textContent = '';
+      $('res').innerHTML = ''; renderHist(); setConn(false); renderAll();
+    }, true);
+  });
+
+  // ---------- 設定 ----------
+  function openSetup() {
+    $('setupUrl').value = cfg ? cfg.base + '?p=offline&k=' + cfg.k : '';
+    $('setupErr').classList.add('hidden');
+    $('setup').classList.remove('hidden');
+    $('setupUrl').focus();
+  }
+  $('setupBtn').addEventListener('click', openSetup);
+  $('setupCancel').addEventListener('click', function () { $('setup').classList.add('hidden'); focusScan(); });
+  $('setupSave').addEventListener('click', function () {
+    var v = $('setupUrl').value.trim();
+    var m = v.match(/^(https:\/\/script\.google(?:usercontent)?\.com\/[^?#\s]+?\/exec)\?(?:.*&)?k=([A-Za-z0-9]+)/);
+    if (!m) { $('setupErr').textContent = 'URLの形が違います。［URLを表示］の「オフライン照合の設定用」をそのまま貼ってください。'; $('setupErr').classList.remove('hidden'); return; }
+    cfg = { base: m[1], k: m[2] };
+    save(K_CFG, cfg);
+    $('setup').classList.add('hidden');
+    refresh(true).then(function () { if (audio) focusScan(); else openStart(); });
+  });
+
+  // ---------- 開始 ----------
+  function openStart() {
+    $('startInfo').innerHTML = list ? '手元の一覧：<b>' + hm(list.at) + ' 時点・' + list.tickets.length + '件</b>' : '一覧はまだありません。ネットにつないで取り込みます。';
+    $('start').classList.remove('hidden');
+  }
+  $('startBtn').addEventListener('click', function () {
+    try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    $('start').classList.add('hidden');
+    focusScan();
+  });
+
+  // ---------- 確認ダイアログ ----------
+  function ask(title, body, okLabel, onOk, danger) {
+    $('dlgTitle').textContent = title; $('dlgBody').innerHTML = body;
+    $('dlgBtns').innerHTML = '<button type="button" id="dlgNo">やめる</button><button type="button" class="' + (danger ? 'danger' : 'primary') + '" id="dlgYes">' + esc(okLabel) + '</button>';
+    $('dlg').classList.remove('hidden');
+    $('dlgNo').onclick = function () { $('dlg').classList.add('hidden'); focusScan(); };
+    $('dlgYes').onclick = function () { $('dlg').classList.add('hidden'); onOk(); focusScan(); };
+    $('dlgYes').focus();
+  }
+  function notice(title, body) {
+    $('dlgTitle').textContent = title; $('dlgBody').innerHTML = body;
+    $('dlgBtns').innerHTML = '<button type="button" class="primary" id="dlgOk">閉じる</button>';
+    $('dlg').classList.remove('hidden');
+    $('dlgOk').onclick = function () { $('dlg').classList.add('hidden'); focusScan(); };
+    $('dlgOk').focus();
+  }
+
+  // ---------- 表示 ----------
+  function renderBar() {
+    $('listInfo').textContent = list ? '手元の一覧：' + hm(list.at) + ' 時点・' + list.tickets.length + '件' + (online === false ? '（ネットにつながると自動で更新します）' : '（3分ごとに自動更新）') : '一覧をまだ取り込んでいません';
+    var n = recs.filter(function (r) { return !r.sent; }).length;
+    $('unsent').textContent = '未送信 ' + n + '件';
+    $('unsent').className = 'unsent' + (n ? ' has' : '');
+    $('sendBtn').disabled = !n || sending || !cfg;
+  }
+  function renderStats() {
+    if (!list) { $('stats').textContent = '一覧なし'; return; }
+    var used = 0, unused = 0;
+    list.tickets.forEach(function (t) { var s = effective(t).s; if (s === '引換済') used++; else if (s === '未使用') unused++; });
+    $('stats').innerHTML = '引換済 <b>' + used + '</b> ／ 残り <b>' + unused + '</b>';
+  }
+  function renderAll() {
+    $('title').textContent = (list && list.eventName ? list.eventName + '　' : '') + 'オフライン照合';
+    renderBar(); renderStats();
+  }
+
+  // ---------- スキャン入力 ----------
+  var idleTimer = null;
+  function focusScan() { if ($('dlg').classList.contains('hidden') && $('setup').classList.contains('hidden')) $('scan').focus(); }
+  $('scan').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); submitScan(); } });
+  $('scan').addEventListener('input', function () {
+    clearTimeout(idleTimer);
+    if (digits($('scan').value).length >= CODE_LEN) idleTimer = setTimeout(submitScan, 200);
+  });
+  function submitScan() {
+    clearTimeout(idleTimer);
+    var raw = $('scan').value; $('scan').value = '';
+    if (raw.trim()) check(toHalf(raw).trim());
+  }
+  setInterval(function () {
+    var blocked = !$('start').classList.contains('hidden') || !$('setup').classList.contains('hidden') || !$('dlg').classList.contains('hidden');
+    var a = document.activeElement;
+    if (!blocked && !(a && a.closest && a.closest('aside, .bar')) && a !== $('scan')) focusScan();
+    var on = document.activeElement === $('scan');
+    $('ready').className = 'ready ' + (on ? 'on' : 'off');
+    $('ready').textContent = on ? 'スキャンできます' : 'スキャン欄をクリックしてください（手入力中）';
+  }, 400);
+  $('refreshBtn').addEventListener('click', function () { refresh(true); });
+
+  // ---------- 起動 ----------
+  // 再読み込みしても、このPCの記録を履歴に戻す
+  hist = recs.slice().reverse().slice(0, 50).map(function (r) {
+    var t = byCode[r.code];
+    return { when: r.at, cls: 'ok', text: t ? t.n + '：' + t.i.join('、') : r.code, rec: r, verdict: '引換OK' };
+  });
+  renderAll(); renderHist(); setConn(null);
+  if (!cfg) openSetup();
+  else { openStart(); refresh(false); }
+})();
+</script>
+</body>
+</html>

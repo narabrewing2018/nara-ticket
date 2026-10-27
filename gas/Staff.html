@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #F5F3EE; --ink: #1E1E22; --accent: #B0463B; --muted: #6B6A66; --line: #DDD9CF;
+    --ok: #1F7A3A; --ok-bg: #E3F2E7; --ng: #B0463B; --ng-bg: #F8E2DF; --warn: #9A6500; --warn-bg: #FBEFD5;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif; font-size: 16px;
+  }
+  .top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 16px; background: var(--ink); color: #fff; }
+  .top .title { font-weight: 700; font-size: 16px; flex: 1; min-width: 180px; }
+  .top .term { font-size: 13px; background: #fff; color: var(--ink); border-radius: 999px; padding: 3px 12px; font-weight: 700; cursor: pointer; }
+  .stats { font-size: 13px; opacity: .9; }
+  .stats b { font-size: 16px; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; padding: 16px; max-width: 1200px; margin: 0 auto; }
+  @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .scanbox { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .scanbox label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px; }
+  #scan {
+    width: 100%; font-size: 26px; padding: 10px 12px; border: 2px solid var(--line); border-radius: 10px;
+    font-family: "SF Mono", Menlo, Consolas, monospace; letter-spacing: .06em; ime-mode: disabled;
+  }
+  #scan:focus { outline: none; border-color: var(--ink); }
+  .ready { font-size: 13px; margin-top: 6px; color: var(--muted); }
+  .ready.on::before { content: "●"; color: var(--ok); margin-right: 4px; }
+  .ready.off::before { content: "●"; color: var(--ng); margin-right: 4px; }
+  .status-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .wake { font-size: 12px; margin-top: 6px; color: var(--muted); }
+  .wake.ng { color: var(--ng); font-weight: 700; }
+  .panel { margin-top: 14px; border-radius: 16px; padding: 22px 22px; min-height: 260px; border: 3px solid var(--line); background: #fff; }
+  .panel .verdict { font-size: 44px; font-weight: 900; line-height: 1.2; }
+  .panel .why { font-size: 18px; margin-top: 6px; }
+  .panel .items { font-size: 26px; font-weight: 700; margin: 16px 0 0; padding-left: 1.1em; line-height: 1.5; }
+  .panel .who { font-size: 16px; color: var(--muted); margin-top: 12px; }
+  .panel.idle { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 18px; text-align: center; }
+  .panel.ok { background: var(--ok-bg); border-color: var(--ok); }
+  .panel.ok .verdict { color: var(--ok); }
+  .panel.ng { background: var(--ng-bg); border-color: var(--ng); }
+  .panel.ng .verdict { color: var(--ng); }
+  .panel.warn { background: var(--warn-bg); border-color: var(--warn); }
+  .panel.warn .verdict { color: var(--warn); }
+  .panel.busy { border-color: var(--ink); }
+  .side { display: flex; flex-direction: column; gap: 16px; }
+  .box { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .box h2 { font-size: 14px; margin: 0 0 10px; }
+  .hist { list-style: none; margin: 0; padding: 0; font-size: 13.5px; max-height: 360px; overflow: auto; }
+  .hist li { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); }
+  .hist li:first-child { border-top: 0; }
+  .tag { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 1px 6px; color: #fff; white-space: nowrap; }
+  .tag.OK { background: var(--ok); } .tag.NG { background: var(--ng); } .tag.WARN { background: var(--warn); } .tag.UNDO { background: var(--muted); }
+  .hist .t { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .hist .d { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line); background: #fff; padding: 6px 10px; }
+  button.primary { background: var(--ink); color: #fff; border-color: var(--ink); font-weight: 700; }
+  button.small { font-size: 12px; padding: 3px 8px; }
+  .search { display: flex; gap: 8px; }
+  .search input { flex: 1; min-width: 0; font-size: 15px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+  .res { list-style: none; margin: 10px 0 0; padding: 0; font-size: 13.5px; }
+  .res li { border-top: 1px solid var(--line); padding: 8px 0; }
+  .res .row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .muted { color: var(--muted); font-size: 12.5px; }
+  .overlay { position: fixed; inset: 0; background: rgba(30,30,34,.86); display: flex; align-items: center; justify-content: center; z-index: 10; }
+  .overlay .inner { background: #fff; border-radius: 16px; padding: 28px; width: min(420px, calc(100% - 32px)); text-align: center; }
+  .overlay h1 { font-size: 20px; margin: 0 0 8px; }
+  .overlay input { width: 100%; font-size: 20px; padding: 10px; margin: 12px 0; border: 1px solid var(--line); border-radius: 8px; text-align: center; }
+  .overlay button { width: 100%; font-size: 18px; padding: 14px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="title" id="title">引換スキャン</div>
+  <div class="stats" id="stats">集計を読み込み中…</div>
+  <div class="term" id="term" title="端末名を変更">端末 -</div>
+</div>
+
+<main>
+  <section>
+    <div class="scanbox">
+      <label for="scan">ここにスキャン（カーソルが入っている状態で読み取ってください）</label>
+      <input id="scan" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="none" lang="en">
+      <div class="status-row">
+        <div class="ready off" id="ready">準備中</div>
+        <div class="wake" id="wake"></div>
+      </div>
+    </div>
+    <div class="panel idle" id="panel">バーコードを読み取ると、ここに結果が表示されます</div>
+  </section>
+
+  <aside class="side">
+    <div class="box">
+      <h2>手入力で探す（スマホの電池切れ・読み取れない時）</h2>
+      <form class="search" id="sform">
+        <input id="q" placeholder="受注番号・氏名・メール・コード">
+        <button class="primary" type="submit">検索</button>
+      </form>
+      <ul class="res" id="res"></ul>
+    </div>
+    <div class="box">
+      <h2>この端末の履歴</h2>
+      <ul class="hist" id="hist"><li class="muted">まだありません</li></ul>
+    </div>
+  </aside>
+</main>
+
+<div class="overlay" id="start">
+  <div class="inner">
+    <h1>引換スキャンを開始</h1>
+    <div class="muted">端末名（例：A、B、C）</div>
+    <input id="termInput" maxlength="20" autocomplete="off">
+    <button class="primary" id="startBtn">開始する</button>
+    <p class="muted" style="margin-top:12px">開始すると音が鳴るようになります。<br>入力モードは「半角英数」にしてください。</p>
+  </div>
+</div>
+
+<script>
+  // NoSleep.js v0.12.0 (https://github.com/richtr/NoSleep.js) の無音動画データ。MIT License
+  var NOSLEEP_MEDIA = {"webm": "data:video/webm;base64,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", "mp4": "data:video/mp4;base64,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"};
+</script>
+<script>
+  var BOOT = <?!= bootJson ?>;
+  var TERM_KEY = 'nb_voucher_terminal';
+  var CODE_LEN = 12;
+  var terminal = BOOT.terminal || '';
+  var queue = [], busy = false, audio = null, scanHist = [], idleTimer = null;
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function toHalf(s) { return String(s || '').replace(/[！-～]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); }); }
+  function digits(s) { return toHalf(s).replace(/\D/g, ''); }
+  function hhmmss() { var d = new Date(); return [d.getHours(), d.getMinutes(), d.getSeconds()].map(function (n) { return ('0' + n).slice(-2); }).join(':'); }
+
+  if (BOOT.eventName) $('title').textContent = BOOT.eventName + '　引換スキャン';
+  if (!terminal) { try { terminal = localStorage.getItem(TERM_KEY) || ''; } catch (e) {} }
+  $('termInput').value = terminal;
+
+  function setTerm(t) {
+    terminal = String(t || '').trim().slice(0, 20) || '?';
+    $('term').textContent = '端末 ' + terminal;
+    try { localStorage.setItem(TERM_KEY, terminal); } catch (e) {}
+  }
+
+  // ---------- 音 ----------
+  function beep(kind) {
+    if (!audio) return;
+    try {
+      var seq = kind === 'ok' ? [[1320, 0.12]] : kind === 'warn' ? [[660, 0.18], [660, 0.18]] : [[220, 0.35], [180, 0.35]];
+      var t = audio.currentTime;
+      seq.forEach(function (s) {
+        var o = audio.createOscillator(), g = audio.createGain();
+        o.type = kind === 'ok' ? 'sine' : 'square';
+        o.frequency.value = s[0];
+        g.gain.setValueAtTime(0.25, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + s[1]);
+        o.connect(g); g.connect(audio.destination);
+        o.start(t); o.stop(t + s[1]);
+        t += s[1] + 0.06;
+      });
+    } catch (e) {}
+  }
+
+  // ---------- 開始 ----------
+  $('startBtn').addEventListener('click', function () {
+    setTerm($('termInput').value);
+    try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    $('start').classList.add('hidden');
+    keepAwake();
+    focusScan();
+    refreshStats();
+  });
+
+  // ---------- 画面スリープ防止 ----------
+  // 1) Screen Wake Lock API（使える端末・ブラウザでは最優先）
+  // 2) 使えない場合（Apps Script の画面枠で許可されない等）は、無音の短い動画をループ再生して消灯を防ぐ
+  //    （NoSleep.js と同じ方法。動画データは NoSleep.js v0.12.0 より・MIT License）
+  var wakeLock = null, sleepVideo = null;
+  function setWake(ok, text) { $('wake').className = 'wake' + (ok ? '' : ' ng'); $('wake').textContent = text; }
+  function videoPlaying() { return sleepVideo && !sleepVideo.paused; }
+  function startVideo() {
+    if (!sleepVideo) {
+      sleepVideo = document.createElement('video');
+      sleepVideo.setAttribute('playsinline', '');
+      sleepVideo.setAttribute('title', 'No Sleep');
+      sleepVideo.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;bottom:0;left:0';
+      [['webm', NOSLEEP_MEDIA.webm], ['mp4', NOSLEEP_MEDIA.mp4]].forEach(function (m) {
+        var src = document.createElement('source'); src.src = m[1]; src.type = 'video/' + m[0]; sleepVideo.appendChild(src);
+      });
+      sleepVideo.addEventListener('loadedmetadata', function () {
+        if (sleepVideo.duration <= 1) sleepVideo.setAttribute('loop', '');
+        else sleepVideo.addEventListener('timeupdate', function () { if (sleepVideo.currentTime > 0.5) sleepVideo.currentTime = Math.random(); });
+      });
+      document.body.appendChild(sleepVideo);
+    }
+    var pr = sleepVideo.play();
+    return pr && pr.then ? pr : Promise.resolve();
+  }
+  function keepAwake() {
+    // 動画はタップ操作の中で再生を始める必要があるため、先に開始しておく
+    var vid = startVideo().then(function () { return true; }, function () { return false; });
+    var native = ('wakeLock' in navigator)
+      ? navigator.wakeLock.request('screen').then(function (lock) {
+          wakeLock = lock;
+          lock.addEventListener('release', function () { wakeLock = null; updateWake(); });
+          return true;
+        }, function () { return false; })
+      : Promise.resolve(false);
+    Promise.all([native, vid]).then(function (r) {
+      if (r[0] && videoPlaying()) sleepVideo.pause();   // 本来の方式が使えれば動画は止める
+      updateWake();
+    });
+  }
+  function updateWake() {
+    if (wakeLock) setWake(true, '画面は消えません');
+    else if (videoPlaying()) setWake(true, '画面は消えません（動画方式）');
+    else setWake(false, '画面が消える可能性があります。画面をタップするか、端末の自動ロックを「なし」に');
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible' || !$('start').classList.contains('hidden')) return;
+    if (!wakeLock && !videoPlaying()) keepAwake(); else updateWake();
+  });
+  // アプリ切替などで外れた後は、次に画面をタップした時に取り直す
+  document.addEventListener('click', function () {
+    if ($('start').classList.contains('hidden') && !wakeLock && !videoPlaying()) keepAwake();
+  });
+  setInterval(function () { if ($('start').classList.contains('hidden')) updateWake(); }, 5000);
+
+  $('termInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('startBtn').click(); });
+  $('term').addEventListener('click', function () {
+    var t = prompt('端末名', terminal);
+    if (t !== null) setTerm(t);
+    focusScan();
+  });
+
+  // ---------- フォーカス維持（手入力欄・ボタン操作中は除く） ----------
+  function focusScan() { $('scan').focus(); }
+  setInterval(function () {
+    if (!$('start').classList.contains('hidden')) return;
+    var a = document.activeElement;
+    var inSide = a && a.closest && a.closest('aside');
+    if (!inSide && a !== $('scan')) focusScan();
+    var on = document.activeElement === $('scan');
+    $('ready').className = 'ready ' + (on ? 'on' : 'off');
+    $('ready').textContent = on ? 'スキャンできます' : 'スキャン欄をクリックしてください（手入力中）';
+  }, 400);
+
+  // ---------- スキャン入力 ----------
+  // Enter で送信。スキャナが Enter を送らない設定でも、12桁そろって 0.2秒止まったら送信。
+  $('scan').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); submitScan(); }
+  });
+  $('scan').addEventListener('input', function () {
+    clearTimeout(idleTimer);
+    if (digits($('scan').value).length >= CODE_LEN) idleTimer = setTimeout(submitScan, 200);
+  });
+
+  function submitScan() {
+    clearTimeout(idleTimer);
+    var raw = $('scan').value;
+    $('scan').value = '';
+    if (!raw.trim()) return;
+    queue.push(toHalf(raw).trim());
+    pump();
+  }
+
+  function pump() {
+    if (busy || !queue.length) return;
+    busy = true;
+    var raw = queue.shift();
+    showBusy(raw);
+    google.script.run
+      .withSuccessHandler(function (r) { busy = false; showResult(r); refreshStatsSoon(); pump(); })
+      .withFailureHandler(function (err) {
+        busy = false;
+        showNetError(raw, err);
+        pump();
+      })
+      .redeem(BOOT.key, raw, terminal);
+  }
+
+  function showBusy(raw) {
+    var p = $('panel');
+    p.className = 'panel busy';
+    p.innerHTML = '<div class="verdict" style="font-size:30px">照会中…</div><div class="why">' + esc(digits(raw)) + '</div>';
+  }
+
+  function itemsHtml(t) {
+    return '<ul class="items">' + (t.items || []).map(function (i) { return '<li>' + esc(i) + '</li>'; }).join('') + '</ul>' +
+      '<div class="who">' + esc(t.name) + ' 様 ／ 受注番号 ' + esc(t.order) + ' ／ 計 ' + esc(t.qty) + '点</div>';
+  }
+
+  function showResult(r) {
+    var p = $('panel'), cls, verdict, why = '', body = '', kind, tag;
+    switch (r.result) {
+      case 'OK':
+        cls = 'ok'; verdict = '引換OK'; why = '下記の商品をお渡しください'; body = itemsHtml(r); kind = 'ok'; tag = 'OK'; break;
+      case 'USED':
+        cls = 'ng'; verdict = '引換済みです'; why = r.usedAt + ' に 端末' + (r.usedBy || '?') + ' で引換済み'; body = itemsHtml(r); kind = 'ng'; tag = 'NG'; break;
+      case 'UNPAID':
+        cls = 'warn'; verdict = '未入金です'; why = 'ご入金が確認できていません。責任者に確認してください'; body = itemsHtml(r); kind = 'warn'; tag = 'WARN'; break;
+      case 'VOID':
+        cls = 'ng'; verdict = '無効な引換券'; why = 'キャンセル等で無効になっています' + (r.note ? '（' + r.note + '）' : ''); body = itemsHtml(r); kind = 'ng'; tag = 'NG'; break;
+      case 'NOT_FOUND':
+        cls = 'ng'; verdict = '見つかりません'; why = 'コード ' + r.code + ' は登録されていません。右の「手入力で探す」で受注番号を確認してください'; kind = 'ng'; tag = 'NG'; break;
+      default:
+        cls = 'warn'; verdict = '読み取りエラー'; why = 'もう一度読み取ってください（' + (r.raw || '') + '）'; kind = 'warn'; tag = 'WARN';
+    }
+    p.className = 'panel ' + cls;
+    p.innerHTML = '<div class="verdict">' + esc(verdict) + '</div><div class="why">' + esc(why) + '</div>' + body;
+    beep(kind);
+    addHist(tag, r.result === 'OK' ? (r.name + '：' + (r.items || []).join('、')) : verdict + (r.order ? '（' + r.order + '）' : ''), r.result === 'OK' ? r.code : null);
+  }
+
+  function showNetError(raw, err) {
+    var p = $('panel');
+    p.className = 'panel warn';
+    p.innerHTML = '<div class="verdict">通信エラー</div><div class="why">' + esc(digits(raw)) +
+      ' は処理されていない可能性があります。<br>もう一度読み取ってください（二重引換にはなりません）。</div>' +
+      '<div class="who">' + esc((err && err.message) || '') + '</div>';
+    beep('warn');
+    addHist('WARN', '通信エラー ' + digits(raw), null);
+  }
+
+  // ---------- 履歴・取消 ----------
+  function addHist(tag, text, code) {
+    scanHist.unshift({ t: hhmmss(), tag: tag, text: text, code: code });
+    scanHist = scanHist.slice(0, 30);
+    drawHist();
+  }
+  function drawHist() {
+    $('hist').innerHTML = scanHist.map(function (h, i) {
+      return '<li><span class="t">' + h.t + '</span><span class="tag ' + h.tag + '">' + h.tag + '</span><span class="d" title="' + esc(h.text) + '">' + esc(h.text) + '</span>' +
+        (h.code ? '<button class="small" data-undo="' + i + '">取消</button>' : '') + '</li>';
+    }).join('') || '<li class="muted">まだありません</li>';
+  }
+  $('hist').addEventListener('click', function (e) {
+    var i = e.target.getAttribute('data-undo');
+    if (i === null) return;
+    var h = scanHist[Number(i)];
+    if (!h || !h.code) return;
+    if (!confirm('この引換を取り消して「未使用」に戻しますか？\n' + h.text)) { focusScan(); return; }
+    google.script.run.withSuccessHandler(function (r) {
+      if (r.ok) { h.code = null; addHist('UNDO', '取消：' + h.text, null); refreshStatsSoon(); }
+      else alert(r.message);
+      focusScan();
+    }).withFailureHandler(function (err) { alert('取消に失敗しました：' + err.message); focusScan(); })
+      .undoRedeem(BOOT.key, h.code, terminal);
+  });
+
+  // ---------- 手入力検索 ----------
+  $('sform').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var q = $('q').value.trim();
+    if (q.length < 2) return;
+    $('res').innerHTML = '<li class="muted">検索中…</li>';
+    google.script.run.withSuccessHandler(function (list) {
+      if (!list.length) { $('res').innerHTML = '<li class="muted">見つかりませんでした</li>'; return; }
+      $('res').innerHTML = list.map(function (t) {
+        var btn = t.status === '未使用' ? '<button class="small primary" data-code="' + esc(t.code) + '">引換する</button>' : '<span class="muted">' + esc(t.status) + (t.usedAt ? ' ' + esc(t.usedAt) : '') + '</span>';
+        return '<li><div class="row"><b>' + esc(t.name) + ' 様</b>' + btn + '</div>' +
+          '<div class="muted">受注番号 ' + esc(t.order) + ' ／ ' + esc((t.items || []).join('、')) + '</div></li>';
+      }).join('');
+    }).withFailureHandler(function (err) { $('res').innerHTML = '<li class="muted">エラー：' + esc(err.message) + '</li>'; })
+      .searchTickets(BOOT.key, q);
+  });
+  $('res').addEventListener('click', function (e) {
+    var code = e.target.getAttribute('data-code');
+    if (!code) return;
+    if (!confirm('ご本人確認のうえ、この注文を引換済みにします。よろしいですか？')) return;
+    $('res').innerHTML = '';
+    $('q').value = '';
+    queue.push(code);
+    pump();
+    focusScan();
+  });
+
+  // ---------- 集計 ----------
+  var statsTimer = null;
+  function refreshStats() {
+    google.script.run.withSuccessHandler(function (s) {
+      $('stats').innerHTML = '引換済 <b>' + s.used + '</b> ／ 残り <b>' + s.unused + '</b> ／ 計 ' + s.total;
+    }).withFailureHandler(function () {}).getStats(BOOT.key);
+  }
+  function refreshStatsSoon() { clearTimeout(statsTimer); statsTimer = setTimeout(refreshStats, 1500); }
+  setInterval(refreshStats, 60000);
+
+  if (terminal) setTerm(terminal);
+</script>
+</body>
+</html>
