@@ -4,7 +4,7 @@ src = pathlib.Path(sys.argv[1]); out = pathlib.Path(sys.argv[2])
 s = src.read_text()
 
 CONFIG = """  // ===== 設定（ここだけ書き換える） =====
-  var GAS_URL = 'ここにApps ScriptのURL（…/exec）を貼る';
+  var GAS_URL = 'https://script.google.com/macros/s/AKfycbwOZQWB0Kn6lH4wSaknhrFCGK9XzX4omndBeGo65lycxzZCMKBH9kACFQehWMR3XFSJ/exec';
   var BOOT = {
     eventName: 'twilight 缶ビール引換券',
     eventInfo: '2026年11月8日（日）12:00〜18:00　日本武道館 奈良醸造ブース',
