@@ -357,6 +357,18 @@
 
   function showNetError(raw, err) {
     var p = $('panel');
+    var msg = String((err && err.message) || '');
+    // 合言葉が無効（URLが古い・違う）のときは通信エラーではないので、別の表示にする
+    if (/スキャン用URLが無効/.test(msg)) {
+      p.className = 'panel ng';
+      p.innerHTML = '<div class="verdict">スキャン用URLが無効です</div>' +
+        '<div class="why">この端末のスキャン用URLが古いか、正しくありません。<br>' +
+        '管理シートの［URLを表示］で最新のQRコードを読み、開き直してください。</div>' +
+        '<div class="who">読み取った ' + esc(digits(raw)) + ' は処理されていません。</div>';
+      beep('ng');
+      addHist('NG', 'スキャン用URLが無効です', null);
+      return;
+    }
     p.className = 'panel warn';
     p.innerHTML = '<div class="verdict">通信エラー</div><div class="why">' + esc(digits(raw)) +
       ' は処理されていない可能性があります。<br>もう一度読み取ってください（二重引換にはなりません）。</div>' +
