@@ -598,20 +598,34 @@ function showUrls() {
   const url = webAppUrl_();
   if (!url) { SpreadsheetApp.getUi().alert('先にWebアプリとしてデプロイしてください。'); return; }
   const k = staffKey_();
-  const esc = function (s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;'); };
+  const esc = function (s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); };
   const row = function (label, u) {
     return '<p><b>' + label + '</b><br><input style="width:100%;font-size:12px" readonly onclick="this.select()" value="' + esc(u) + '"></p>';
   };
-  const html = '<div style="font-family:sans-serif;font-size:13px;line-height:1.6">' +
+  // スキャン用URLのQRコード（スマホのカメラで読んで開く）。QRは画面内で作り、URLを外部に送らない
+  const qr = function (label, u) {
+    return '<div class="q"><div class="qr" data-u="' + esc(u) + '"></div><b>' + label + '</b>' +
+      '<input readonly onclick="this.select()" value="' + esc(u) + '"></div>';
+  };
+  const html =
+    '<style>body{font-family:sans-serif;font-size:13px;line-height:1.6;margin:0}' +
+    '.qs{display:flex;gap:12px;flex-wrap:wrap}.q{flex:1;min-width:150px;text-align:center;border:1px solid #ddd;border-radius:8px;padding:8px}' +
+    '.q .qr svg{width:150px;height:150px}.q b{display:block;font-size:15px}.q input{width:100%;font-size:10px;margin-top:4px}' +
+    '.warn{color:#B0463B}</style>' +
+    '<p class="warn"><b>スタッフ専用です。外部に出さないでください。</b></p>' +
+    '<p>スマホのカメラでQRコードを読むと、その端末用のスキャン画面が開きます。</p>' +
+    '<div class="qs">' +
+    qr('端末A', url + '?p=staff&k=' + k + '&t=A') +
+    qr('端末B', url + '?p=staff&k=' + k + '&t=B') +
+    qr('端末C', url + '?p=staff&k=' + k + '&t=C') +
+    '</div>' +
+    row('オフライン照合の設定用（PCの「オフライン照合」に一度だけ貼る）', url + '?p=offline&k=' + k) +
     row('Apps ScriptのURL（GitHubの引換券ページ index.html の GAS_URL に貼る）', url) +
     '<p>お客様にお知らせするURL（メール・商品ページ）は、GitHub Pages の引換券ページです。</p>' +
-    '<p style="color:#B0463B">以下はスタッフ専用です。外部に出さないでください。</p>' +
-    row('スキャン用 端末A', url + '?p=staff&k=' + k + '&t=A') +
-    row('スキャン用 端末B', url + '?p=staff&k=' + k + '&t=B') +
-    row('スキャン用 端末C', url + '?p=staff&k=' + k + '&t=C') +
-    row('オフライン照合の設定用（PCの「オフライン照合」に一度だけ貼る）', url + '?p=offline&k=' + k) +
-    '</div>';
-  SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(html).setWidth(620).setHeight(500), 'URL');
+    '<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>' +
+    '<script>document.querySelectorAll(".qr").forEach(function(el){try{var q=qrcode(0,"M");q.addData(el.getAttribute("data-u"));q.make();' +
+    'el.innerHTML=q.createSvgTag({cellSize:4,margin:4,scalable:true});}catch(e){el.textContent="QRコードを表示できませんでした";}});</script>';
+  SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(html).setWidth(640).setHeight(620), 'スキャン用URL');
 }
 
 function checkStaffKey_(k) {
