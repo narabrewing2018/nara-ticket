@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>バーコードの大きさテスト｜奈良醸造</title>
+<style>
+  body { margin: 0; background: #F5F3EE; color: #1E1E22; font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif; }
+  .wrap { max-width: 460px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  p { font-size: 13.5px; line-height: 1.6; margin: 0 0 12px; }
+  .card { background: #fff; border-radius: 12px; padding: 14px 10px; margin-bottom: 14px; text-align: center; }
+  .card h2 { font-size: 15px; margin: 0 0 8px; }
+  .bar { margin: 0 auto; background: #fff; }
+  .bar svg { width: 100%; display: block; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>バーコードの大きさテスト（スタッフ用）</h1>
+  <p>画面の明るさを最大にして、上から順にスキャナで読み取ってください。どれがいちばん速く読めるかを確かめます。<br>
+  番号は 1234 5678 9012（登録されていない番号）です。スキャン画面では「見つかりません」と出れば、読み取れています。</p>
+  <div id="list"></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script>
+  // 引換券ページ（index.html）と同じ作り方。幅と高さだけを変える
+  var SIZES = [
+    ['A', 160, 60, '小さい（約2.6cm）'],
+    ['B', 190, 66, 'やや小さい（約3cm）'],
+    ['C', 220, 72, '標準（約3.5cm）＝ 10/28 から引換券ページで使う大きさ'],
+    ['D', 260, 90, 'やや大きい（約4.2cm）'],
+    ['E', 340, 130, '大きい（約5.5cm）＝ 10/28 までの引換券ページの大きさ']
+  ];
+  var list = document.getElementById('list');
+  SIZES.forEach(function (s) {
+    var c = document.createElement('div'); c.className = 'card';
+    c.innerHTML = '<h2>' + s[0] + '：' + s[3] + '</h2><div class="bar" style="width:' + s[1] + 'px;max-width:100%"><svg id="b' + s[0] + '" style="height:' + s[2] + 'px"></svg></div>';
+    list.appendChild(c);
+    JsBarcode('#b' + s[0], '123456789012', { format: 'CODE128', displayValue: false, width: 2, height: 100,
+      marginTop: 4, marginBottom: 4, marginLeft: 24, marginRight: 24, background: '#ffffff', lineColor: '#000000' });
+    var svg = document.getElementById('b' + s[0]), w = svg.getAttribute('width'), h = svg.getAttribute('height');
+    if (!svg.getAttribute('viewBox') && w && h) svg.setAttribute('viewBox', '0 0 ' + parseFloat(w) + ' ' + parseFloat(h));
+    svg.removeAttribute('width'); svg.removeAttribute('height');
+    svg.setAttribute('preserveAspectRatio', 'none');
+  });
+</script>
+</body>
+</html>
