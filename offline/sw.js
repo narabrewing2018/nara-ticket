@@ -4,7 +4,7 @@
  * ・Apps Script への問い合わせ（一覧の取り込み・記録の送信）には関わらない
  * ・ページを直したら VERSION を上げる
  */
-var VERSION = 'nara-offline-v1';
+var VERSION = 'nara-offline-v2';
 var PAGE = new URL('Offline.html', self.registration.scope).href;
 
 self.addEventListener('install', function (e) {

@@ -145,7 +145,7 @@
 <main>
   <section>
     <div class="scanbox">
-      <label for="scan" id="scanLabel">ここにスキャン（スキャナ2台まで。カーソルが入っている状態で読み取ってください）</label>
+      <label for="scan" id="scanLabel">ここにスキャン（そのまま読み取れます）</label>
       <div class="scanrow">
         <input id="scan" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" lang="en">
         <button class="primary" id="goBtn" type="button">照合</button>
@@ -438,8 +438,9 @@
       return '<li><div class="row"><b>' + esc(t.n) + ' 様</b>' + btn + '</div><div class="muted">受注番号 ' + esc(t.o) + ' ／ ' + esc(t.i.join('、')) + '</div></li>';
     }).join('');
   }
-  $('qBtn').addEventListener('click', search);
-  $('q').addEventListener('keydown', function (e) { if (e.key === 'Enter') search(); });
+  // 検索したらキーボードを閉じ、次のスキャンが検索欄に入らないようにする
+  $('qBtn').addEventListener('click', function () { $('q').blur(); search(); });
+  $('q').addEventListener('keydown', function (e) { if (e.key === 'Enter') { $('q').blur(); search(); } });
   $('res').addEventListener('click', function (e) {
     var code = e.target.getAttribute('data-code');
     if (!code) return;
@@ -625,18 +626,64 @@
   }
 
   // ---------- スキャン入力 ----------
-  var idleTimer = null;
+  // 読み取りが途中で切れて数字が残ったら、2秒後に消して知らせる（次のスキャンとつながらないように）。
+  // ［手入力］中と、キーボードで打っているとき（1文字ごとに間があく）は消さない。
+  var idleTimer = null, staleTimer = null, STALE_MS = 2000, lastInputAt = 0, manualInput = false, lastDigitAt = 0;
   function focusScan() { if ($('dlg').classList.contains('hidden') && $('setup').classList.contains('hidden')) $('scan').focus(); }
-  $('scan').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); submitScan(); } });
-  $('scan').addEventListener('input', function () {
-    clearTimeout(idleTimer);
-    if (digits($('scan').value).length >= CODE_LEN) idleTimer = setTimeout(submitScan, 200);
-  });
-  function submitScan() {
-    clearTimeout(idleTimer);
-    var raw = $('scan').value; $('scan').value = '';
-    if (raw.trim()) check(toHalf(raw).trim());
+  function isOtherField(el) {
+    return !!el && el !== $('scan') && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
   }
+  $('scan').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); submitScan(); } });
+  $('scan').addEventListener('input', onScanInput);
+  function onScanInput() {
+    clearTimeout(idleTimer); clearTimeout(staleTimer);
+    var v = $('scan').value, now = Date.now();
+    if (!v.trim()) { manualInput = false; lastInputAt = 0; return; }
+    if (lastInputAt && now - lastInputAt > 150) manualInput = true;   // スキャナは1文字0.05秒以内で送る
+    lastInputAt = now;
+    if (digits(v).length >= CODE_LEN) idleTimer = setTimeout(submitScan, 200);
+    if (!typing && !manualInput) staleTimer = setTimeout(dropStale, STALE_MS);
+  }
+  function dropStale() {
+    var v = $('scan').value.trim();
+    $('scan').value = ''; manualInput = false; lastInputAt = 0;
+    if (!v) return;
+    show({ cls: 'warn', verdict: '読み取りが途中で止まりました', why: 'もう一度読み取ってください（' + esc(digits(v) || v) + ' は消しました）', beep: 'warn' });
+  }
+  function submitScan() {
+    clearTimeout(idleTimer); clearTimeout(staleTimer);
+    var raw = $('scan').value; $('scan').value = ''; manualInput = false; lastInputAt = 0;
+    if (!raw.trim()) return;
+    // 前の手入力検索の文字と結果は、次のスキャンで消す
+    if (document.activeElement !== $('q')) { $('q').value = ''; $('res').innerHTML = ''; }
+    check(toHalf(raw).trim());
+  }
+
+  // カーソルがスキャン欄になくても（iPhone・ボタンを押した後など）、スキャナの入力を画面全体で受け取ってスキャン欄に入れる。
+  // ほかの入力欄（手入力で探す・設定）で文字を打っているときは、その欄に入る。
+  document.addEventListener('keydown', function (e) {
+    var t = e.target;
+    if (t === $('scan') || isOtherField(t) || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+    var isDigit = e.key && e.key.length === 1 && /[0-9０-９]/.test(e.key);
+    var blocked = !$('start').classList.contains('hidden') || !$('setup').classList.contains('hidden') || !$('dlg').classList.contains('hidden');
+    if (blocked) {
+      // 確認ダイアログが出ているときにスキャンしても、スキャナの Enter で［引換する］などが押されないようにする
+      if (isDigit) { lastDigitAt = Date.now(); e.preventDefault(); }
+      else if (e.key === 'Enter' && Date.now() - lastDigitAt < 300) { e.preventDefault(); e.stopPropagation(); }
+      return;
+    }
+    if (e.key === 'Enter') {
+      if ($('scan').value.trim() || Date.now() - lastDigitAt < 300) { e.preventDefault(); e.stopPropagation(); submitScan(); }
+      return;
+    }
+    if (isDigit) {
+      e.preventDefault();
+      lastDigitAt = Date.now();
+      $('scan').value += e.key;
+      onScanInput();
+      focusScan();   // 入れられる端末（Android・PC）では次からスキャン欄に直接入る
+    }
+  }, true);
   $('goBtn').addEventListener('click', function () { submitScan(); focusScan(); });
 
   // ---------- スマホ：スキャナ用（キーボードを出さない）と手入力の切り替え ----------
@@ -654,7 +701,7 @@
   $('typeBtn').addEventListener('click', function () { setTyping(!typing); });
   if (TOUCH) {
     $('scan').setAttribute('inputmode', 'none');
-    $('scanLabel').textContent = 'ここにスキャン（読めないときは［手入力］で受注番号9桁か引換コード12桁を入れて［照合］）';
+    $('scanLabel').textContent = 'ここにスキャン（タップ不要。読めないときは［手入力］で受注番号9桁か引換コード12桁を入れて［照合］）';
   } else {
     $('typeBtn').classList.add('hidden');
     $('scanLabel').textContent = 'ここにスキャン（スキャナ2台まで）。キーボードで受注番号9桁・引換コード12桁を打って Enter でも照合できます';
@@ -676,9 +723,9 @@
     var blocked = !$('start').classList.contains('hidden') || !$('setup').classList.contains('hidden') || !$('dlg').classList.contains('hidden');
     var a = document.activeElement;
     if (!blocked && !(a && a.closest && a.closest('aside, .bar')) && a !== $('scan')) focusScan();
-    var on = document.activeElement === $('scan');
+    var on = !blocked && !isOtherField(document.activeElement);
     $('ready').className = 'ready ' + (on ? 'on' : 'off');
-    $('ready').textContent = on ? 'スキャンできます' : 'スキャン欄をクリックしてください（手入力中）';
+    $('ready').textContent = on ? 'スキャンできます' : '手入力中です（スキャンするときは入力欄の外をタップ）';
   }, 400);
   $('refreshBtn').addEventListener('click', function () { refresh(true); });
 

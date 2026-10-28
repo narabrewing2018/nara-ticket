@@ -97,7 +97,7 @@
 <main>
   <section>
     <div class="scanbox">
-      <label for="scan">ここにスキャン（カーソルが入っている状態で読み取ってください）</label>
+      <label for="scan">ここにスキャン（そのまま読み取れます。この欄をタップする必要はありません）</label>
       <input id="scan" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="none" lang="en">
       <div class="status-row">
         <div class="ready off" id="ready">準備中</div>
@@ -287,32 +287,75 @@
   });
 
   // ---------- フォーカス維持（手入力欄・ボタン操作中は除く） ----------
+  // iPhone はタップ以外でカーソルを入れられないため、カーソルがなくても下の「画面全体で受け取る」で読み取れる
   function focusScan() { $('scan').focus(); }
+  function isOtherField(el) {
+    return !!el && el !== $('scan') && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+  }
   setInterval(function () {
     if (!$('start').classList.contains('hidden')) return;
     var a = document.activeElement;
     var inSide = a && a.closest && a.closest('aside');
     if (!inSide && a !== $('scan')) focusScan();
-    var on = document.activeElement === $('scan');
+    var on = !isOtherField(document.activeElement);
     $('ready').className = 'ready ' + (on ? 'on' : 'off');
-    $('ready').textContent = on ? 'スキャンできます' : 'スキャン欄をクリックしてください（手入力中）';
+    $('ready').textContent = on ? 'スキャンできます' : '手入力中です（スキャンするときは入力欄の外をタップ）';
   }, 400);
 
   // ---------- スキャン入力 ----------
   // Enter で送信。スキャナが Enter を送らない設定でも、12桁そろって 0.2秒止まったら送信。
+  // 読み取りが途中で切れて数字が残ったら、2秒後に消して知らせる（次のスキャンとつながらないように）
+  var STALE_MS = 2000, staleTimer = null, lastDigitAt = 0;
   $('scan').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') { e.preventDefault(); submitScan(); }
   });
-  $('scan').addEventListener('input', function () {
-    clearTimeout(idleTimer);
-    if (digits($('scan').value).length >= CODE_LEN) idleTimer = setTimeout(submitScan, 200);
-  });
+  $('scan').addEventListener('input', onScanInput);
+  function onScanInput() {
+    clearTimeout(idleTimer); clearTimeout(staleTimer);
+    var v = $('scan').value;
+    if (digits(v).length >= CODE_LEN) idleTimer = setTimeout(submitScan, 200);
+    if (v.trim()) staleTimer = setTimeout(dropStale, STALE_MS);
+  }
+  function dropStale() {
+    var v = $('scan').value.trim();
+    $('scan').value = '';
+    if (!v) return;
+    addHist('WARN', '読み取り途中で停止 ' + digits(v), null);
+    beep('warn');
+    if (busy) return;   // 照会中の表示は消さない
+    var p = $('panel');
+    p.className = 'panel warn';
+    p.innerHTML = '<div class="verdict">読み取りが途中で止まりました</div>' +
+      '<div class="why">もう一度読み取ってください（' + esc(digits(v) || v) + ' は消しました）</div>';
+  }
+
+  // カーソルがスキャン欄になくても（iPhone・ボタンを押した後など）、スキャナの入力を画面全体で受け取ってスキャン欄に入れる。
+  // ほかの入力欄（手入力で探す・端末名）で文字を打っているときは、その欄に入る。
+  document.addEventListener('keydown', function (e) {
+    if (!$('start').classList.contains('hidden')) return;
+    var t = e.target;
+    if (t === $('scan') || isOtherField(t) || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+    if (e.key === 'Enter') {
+      // スキャナの Enter で、カーソルのあるボタン（［取消］など）が押されないようにする
+      if ($('scan').value.trim() || Date.now() - lastDigitAt < 300) { e.preventDefault(); e.stopPropagation(); submitScan(); }
+      return;
+    }
+    if (e.key && e.key.length === 1 && /[0-9０-９]/.test(e.key)) {
+      e.preventDefault();
+      lastDigitAt = Date.now();
+      $('scan').value += e.key;
+      onScanInput();
+      focusScan();   // 入れられる端末（Android・PC）では次からスキャン欄に直接入る
+    }
+  }, true);
 
   function submitScan() {
-    clearTimeout(idleTimer);
+    clearTimeout(idleTimer); clearTimeout(staleTimer);
     var raw = $('scan').value;
     $('scan').value = '';
     if (!raw.trim()) return;
+    // 前の手入力検索の文字と結果は、次のスキャンで消す
+    if (document.activeElement !== $('q')) { $('q').value = ''; $('res').innerHTML = ''; }
     queue.push(toHalf(raw).trim());
     pump();
   }
@@ -451,6 +494,8 @@
     var q = $('q').value.trim();
     if (q.length < 2) return;
     $('res').innerHTML = '<li class="muted">検索中…</li>';
+    // 検索したらキーボードを閉じ、次のスキャンが検索欄に入らないようにする
+    $('q').blur();
     google.script.run.withSuccessHandler(function (list) {
       if (!list.length) { $('res').innerHTML = '<li class="muted">見つかりませんでした</li>'; return; }
       $('res').innerHTML = list.map(function (t) {
