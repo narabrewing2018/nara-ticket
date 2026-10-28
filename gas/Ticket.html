@@ -44,6 +44,7 @@
   .bar.solo { margin-top: 8px; }
   .bar.solo svg { height: 130px; }
   .bright { font-size: 13px; font-weight: 700; color: var(--accent); margin: 10px 0 0; }
+  .shot { font-size: 13.5px; line-height: 1.6; text-align: left; margin: 12px 0 0; padding: 10px 12px; border: 2px solid var(--accent); border-radius: 10px; background: #FFF8F0; }
   .digits { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 22px; letter-spacing: .08em; margin-top: 8px; font-weight: 700; }
   .meta { text-align: left; border-top: 1px dashed var(--line); margin-top: 18px; padding-top: 14px; font-size: 14.5px; }
   .meta dt { font-size: 12px; color: var(--muted); }
@@ -188,11 +189,12 @@
         (hasBar ? '<div class="bar' + (hasQr ? '' : ' solo') + '"><svg id="bar"></svg></div>' : '') +
         '<div class="digits">' + esc(grouped) + '</div>' +
         '<p class="bright">画面の明るさを最大にしてご提示ください</p>' +
+        '<p class="shot"><b>今のうちにスクリーンショットを撮っておいてください。</b><br>会場では電波がつながりにくく、この画面を開けないことがあります。スクリーンショットでも引換できます。</p>' +
         metaHtml(r) +
         (BOOT.eventInfo ? '<div class="info">' + esc(BOOT.eventInfo) + '</div>' : '') +
         '<ul class="notes">' +
         '<li>会場の引換所でこの画面をご提示ください。画面を明るくしていただくと読み取りが早くなります。</li>' +
-        '<li>会場は電波がつながりにくいことがあります。<b>この画面のスクリーンショット</b>でも引換できます。</li>' +
+        '<li>スクリーンショットが出せないときは、注文受付メールの受注番号（9桁）をお見せください。</li>' +
         '<li>引換券は1回限り有効です。SNSへの投稿や他の方への共有はお控えください。</li>' +
         '</ul></div>';
       $('result').innerHTML = html;

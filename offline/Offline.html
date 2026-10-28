@@ -5,11 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>オフライン照合</title>
 <!--
-  奈良醸造 イベント引換券 オフライン照合（Wi-Fiが使えないとき用）
-  ・Windows PC の Chrome / Edge でこのファイルを開いて使う（インストール不要）
-  ・ネットにつながっている間は3分ごとに最新の一覧を自動で取り込む
-  ・オフライン中の引換はこのPCのブラウザ内に記録し、復旧後［記録を送信］で管理シートに反映する
-  ・PCに持つ情報：引換コード・受注番号・氏名・引換内容・点数・状態（メール・住所・電話は持たない）
+  奈良醸造 イベント引換券 オフライン照合（通信できないとき用）
+  ・PC：Chrome / Edge でこのファイルを開いて使う（インストール不要）
+  ・スマホ：スキャン画面の［オフライン照合へ］から GitHub Pages 版を開く（合言葉・端末名はスキャン画面から引き継ぐ）
+    GitHub Pages 版はページを端末に保存（Service Worker）するので、オフライン中に再読み込みしても開ける
+  ・ネットにつながっている間は3分ごとに最新の一覧を取り込み、未送信の記録を1分ごとに自動で送信する
+  ・オフライン中の引換は端末のブラウザ内に記録し、つながったら管理シートに反映する（端末名「オフライン○」）
+  ・スキャン欄には、引換コード（12桁）のほか受注番号（9桁）も入れられる
+  ・端末に持つ情報：引換コード・受注番号・氏名・引換内容・点数・状態（メール・住所・電話は持たない）
 -->
 <style>
   :root {
@@ -45,13 +48,31 @@
   .scanbox label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px; }
   #scan { width: 100%; font-size: 26px; padding: 10px 12px; border: 2px solid var(--line); border-radius: 10px; font-family: var(--mono); letter-spacing: .06em; }
   #scan:focus { outline: none; border-color: var(--ink); }
+  #scan::placeholder { font-size: 17px; letter-spacing: 0; font-family: var(--font); }
+  .scanrow { display: flex; gap: 8px; align-items: stretch; }
+  .scanrow #scan { flex: 1; min-width: 0; }
+  .scanrow button { font-size: 16px; padding: 0 14px; white-space: nowrap; }
+  .scanrow #goBtn { display: none; }
+  body.typing .scanrow #goBtn { display: block; flex: 1; padding: 12px 14px; }
+  body.typing .scanrow { flex-wrap: wrap; }
+  body.typing .scanrow #scan { flex-basis: 100%; }
+  body.typing #scan { border-color: var(--off); background: var(--off-bg); }
   .ready { font-size: 13px; margin-top: 6px; color: var(--muted); }
+  .issues { font-weight: 700; color: #fff; background: var(--ng); border: 0; }
+  .term { font-size: 13px; background: #fff; color: var(--ink); border-radius: 999px; padding: 3px 12px; font-weight: 700; white-space: nowrap; }
   .ready.on::before { content: "●"; color: var(--ok); margin-right: 4px; }
   .ready.off::before { content: "●"; color: var(--ng); margin-right: 4px; }
 
   /* 直近2件を並べる（スキャナ2台用） */
   .panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
-  @media (max-width: 700px) { .panels { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 700px) {
+    .panels { grid-template-columns: minmax(0, 1fr); }
+    #p1 { display: none; }   /* スマホは1台のスキャナなので最新の結果だけ出す */
+    .panel { min-height: 200px; }
+    .panel .verdict { font-size: 34px; }
+    main { padding: 12px; }
+    .bar { padding: 8px 12px; }
+  }
   .panel { border-radius: 16px; padding: 18px; min-height: 250px; border: 3px solid var(--line); background: var(--panel); min-width: 0; }
   .panel .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .panel .newest { background: var(--ink); color: #fff; border-radius: 4px; padding: 1px 8px; font-weight: 700; font-size: 12px; }
@@ -106,12 +127,14 @@
 <div class="top">
   <div class="title" id="title">オフライン照合</div>
   <div class="stats" id="stats">一覧なし</div>
+  <div class="term" id="termLabel">端末 -</div>
   <div class="pill none" id="conn">未接続</div>
 </div>
 
 <div class="bar">
   <span class="grow" id="listInfo">一覧をまだ取り込んでいません</span>
   <button class="small" id="refreshBtn" type="button">今すぐ一覧を更新</button>
+  <button class="small issues hidden" id="issuesBtn" type="button">要確認 0件</button>
   <span class="unsent" id="unsent">未送信 0件</span>
   <button class="send small" id="sendBtn" type="button" disabled>記録を送信</button>
   <button class="small" id="csvBtn" type="button">CSVで書き出す</button>
@@ -122,8 +145,12 @@
 <main>
   <section>
     <div class="scanbox">
-      <label for="scan">ここにスキャン（スキャナ2台まで。カーソルが入っている状態で読み取ってください）</label>
-      <input id="scan" autocomplete="off" spellcheck="false" lang="en">
+      <label for="scan" id="scanLabel">ここにスキャン（スキャナ2台まで。カーソルが入っている状態で読み取ってください）</label>
+      <div class="scanrow">
+        <input id="scan" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" lang="en">
+        <button class="primary" id="goBtn" type="button">照合</button>
+        <button id="typeBtn" type="button">手入力</button>
+      </div>
       <div class="ready off" id="ready">準備中</div>
     </div>
     <div class="panels">
@@ -142,7 +169,7 @@
       <ul class="list" id="res"></ul>
     </div>
     <div class="box">
-      <h2>このPCの引換記録</h2>
+      <h2>この端末の引換記録</h2>
       <ul class="list hist" id="hist"><li class="muted">まだありません</li></ul>
     </div>
   </aside>
@@ -154,6 +181,8 @@
     <h1>オフライン照合の設定</h1>
     <p>管理シートの［引換券システム］→［URLを表示］にある<b>「オフライン照合の設定用」</b>のURLを貼り付けてください。</p>
     <input type="text" id="setupUrl" placeholder="https://script.google.com/macros/s/…/exec?p=offline&amp;k=…">
+    <p>端末名（例：PC、A、B、C）。管理シートの「端末」に「オフライン＋端末名」で記録されます。</p>
+    <input type="text" id="setupTerm" maxlength="6" placeholder="PC">
     <p class="err hidden" id="setupErr"></p>
     <div class="btns">
       <button type="button" id="setupCancel">閉じる</button>
@@ -184,10 +213,16 @@
 <script>
 (function () {
   'use strict';
-  var CODE_LEN = 12;
+  var CODE_LEN = 12, ORDER_LEN = 9;
   var REFRESH_MS = 3 * 60 * 1000;   // 一覧の自動更新：3分ごと
+  var PUSH_MS = 60 * 1000;          // 未送信の記録の自動送信：1分ごと
   var TIMEOUT_MS = 15000;
   var K_CFG = 'nara_off_cfg', K_LIST = 'nara_off_list', K_RECS = 'nara_off_recs';
+  // GitHub Pages 版で使う Apps Script のURL（引換券ページ index.html の GAS_URL と同じ。合言葉は含まない）
+  var DEFAULT_BASE = 'https://script.google.com/macros/s/AKfycbwOZQWB0Kn6lH4wSaknhrFCGK9XzX4omndBeGo65lycxzZCMKBH9kACFQehWMR3XFSJ/exec';
+  // スキャン画面（同じ GitHub Pages）が端末に保存している合言葉・端末名
+  var K_STAFF_KEY = 'nb_staff_key', K_STAFF_TERM = 'nb_voucher_terminal';
+  var TOUCH = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
 
   var $ = function (id) { return document.getElementById(id); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -203,7 +238,22 @@
     try { localStorage.setItem(k, JSON.stringify(v)); return true; }
     catch (e) { notice('保存できませんでした', '<p>ブラウザに記録を保存できませんでした。［CSVで書き出す］で記録を残してください。</p>'); return false; }
   }
-  var cfg = load(K_CFG, null);          // { base, k }
+  function cleanTerm(t) { return toHalf(t).replace(/[^0-9A-Za-z]/g, '').toUpperCase().slice(0, 6); }
+  var cfg = load(K_CFG, null);          // { base, k, t }
+  // 設定の受け取り：URLの ?k=合言葉&t=端末名 → スキャン画面が保存した合言葉・端末名 の順。合言葉はアドレス欄から消す
+  (function () {
+    var hosted = /^https?:$/.test(location.protocol) && window.isSecureContext;   // GitHub Pages 版（PCに保存したファイルではない）
+    var q = new URLSearchParams(location.search);
+    var k = (q.get('k') || '').replace(/[^A-Za-z0-9]/g, ''), t = cleanTerm(q.get('t') || '');
+    // スキャン画面で最後に開いた合言葉・端末名がいちばん新しいので、あればそれを使う
+    if (!k && hosted) { try { k = (localStorage.getItem(K_STAFF_KEY) || '').replace(/[^A-Za-z0-9]/g, ''); } catch (e) {} }
+    if (!t && hosted) { try { t = cleanTerm(localStorage.getItem(K_STAFF_TERM) || ''); } catch (e) {} }
+    if (k) cfg = { base: (cfg && cfg.base) || DEFAULT_BASE, k: k, t: (cfg && cfg.t) || '' };
+    if (cfg && t) cfg.t = t;
+    if (cfg) save(K_CFG, cfg);
+    if (q.get('k') || q.get('t')) { try { history.replaceState(null, '', location.pathname); } catch (e) {} }
+  })();
+  function termName() { return cfg && cfg.t ? cfg.t : ''; }
   var list = load(K_LIST, null);        // { at, eventName, tickets:[{c,o,n,i,q,s,u,t}] }
   var recs = load(K_RECS, []);          // [{ id, code, at, sent, result }]
   var byCode = {};
@@ -254,6 +304,8 @@
       }
       list = { at: d.at, eventName: d.eventName || '', tickets: d.tickets || [] };
       save(K_LIST, list); index(); setConn(true); renderAll();
+      // つながったら、未送信の記録をすぐに送る
+      if (recs.some(function (r) { return !r.sent; })) setTimeout(function () { sendAll(true); }, 0);
     }).catch(function (e) {
       setConn(false, e.message);
       if (manual) notice('ネットにつながっていません', '<p>手元の一覧' + (list ? '（' + hm(list.at) + ' 時点）' : '') + 'で照合を続けられます。</p>');
@@ -268,7 +320,7 @@
   }
   function effective(t) {
     var r = localRec(t.c);
-    if (r && !r.sent) return { s: '引換済', u: r.at, t: 'このPC（未送信）' };
+    if (r && !r.sent) return { s: '引換済', u: r.at, t: 'この端末（未送信）' };
     return { s: t.s, u: t.u, t: t.t };
   }
 
@@ -291,10 +343,17 @@
   // ---------- 照合 ----------
   function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
-  function check(raw) {
+  function check(raw, byOrder) {
     var code = digits(raw);
-    if (code.length !== CODE_LEN) return show({ cls: 'ng', verdict: '読み取りエラー', why: 'もう一度読み取ってください（' + esc(String(raw).slice(0, 24)) + '）', beep: 'ng' });
-    if (!list) return show({ cls: 'ng', verdict: '一覧がありません', why: 'ネットにつないで一覧を取り込んでください。それまでは紙の当日リストで照合します。', beep: 'ng' });
+    if (!list && (code.length === CODE_LEN || code.length === ORDER_LEN)) return show({ cls: 'ng', verdict: '一覧がありません', why: 'ネットにつないで一覧を取り込んでください。それまでは紙の当日リストで照合します。', beep: 'ng' });
+    // 受注番号（9桁）で照合：バーコードが読めないとき、お客様の画面・メールの受注番号を打ち込む
+    if (code.length === ORDER_LEN) {
+      var hits = list.tickets.filter(function (x) { return String(x.o) === code; });
+      if (!hits.length) return show({ cls: 'ng', verdict: '見つかりません', why: '受注番号 ' + code + ' は手元の一覧（' + hm(list.at) + ' 時点）にありません。番号を確かめてください。', beep: 'ng', code: code });
+      if (hits.length > 1) { $('q').value = code; search(); return show({ cls: 'warn', verdict: '複数あります', why: '受注番号 ' + code + ' の引換券が ' + hits.length + '件あります。右（下）の一覧から選んでください。', beep: 'warn' }); }
+      return check(hits[0].c, true);
+    }
+    if (code.length !== CODE_LEN) return show({ cls: 'ng', verdict: '読み取りエラー', why: 'もう一度読み取ってください（' + esc(String(raw).slice(0, 24)) + '）。手入力のときは、引換コード12桁か受注番号9桁を入れてください。', beep: 'ng' });
     var t = byCode[code];
     if (!t) return show({ cls: 'ng', verdict: '見つかりません', why: '手元の一覧（' + hm(list.at) + ' 時点）にない引換券です。それ以降のご注文の可能性があります。注文受付メールを見せていただき、責任者が判断してください。', beep: 'ng', code: code });
     var e = effective(t);
@@ -303,7 +362,7 @@
       recs.push(r);
       if (!save(K_RECS, recs)) { recs.pop(); return show({ cls: 'ng', verdict: '記録できません', why: 'この券はまだ渡さないでください。', beep: 'ng' }); }
       renderBar(); renderStats();
-      return show({ cls: 'ok', verdict: '引換OK', why: '下の商品をお渡しください', t: t, beep: 'ok', at: r.at, rec: r });
+      return show({ cls: 'ok', verdict: '引換OK', why: byOrder ? '受注番号で照合しました。<b>お名前を確かめてから</b>お渡しください' : '下の商品をお渡しください', t: t, beep: 'ok', at: r.at, rec: r });
     }
     if (e.s === '引換済') return show({ cls: 'ng', verdict: '引換済みです', why: (e.u ? hms(e.u) + ' に' : '') + (e.t || '') + ' で引換済み。お渡ししないでください。', t: t, beep: 'ng' });
     if (e.s === '入金待ち') return show({ cls: 'warn', verdict: '未入金です', why: 'お支払いが確認できていません。責任者が判断してください。', t: t, beep: 'warn' });
@@ -392,10 +451,26 @@
   });
 
   // ---------- 送信 ----------
+  // silent＝自動送信。結果のダイアログは出さず、確認が必要なものだけ［要確認］ボタンに貯める
   var sending = false;
-  function sendAll() {
+  var issues = load('nara_off_issues', []);
+  var LABEL = { applied: '反映しました', already: '送信済みでした', conflict: '二重引換の可能性', unusable: '入金待ち・無効の券', not_found: '管理シートにない' };
+  function issuesTable(list) {
+    return '<table class="sum"><tr><th>結果</th><th>受注番号</th><th>氏名</th></tr>' +
+      list.map(function (x) { return '<tr><td>' + esc(LABEL[x.result]) + '</td><td>' + esc(x.order || x.code) + '</td><td>' + esc(x.name || '') + '</td></tr>'; }).join('') + '</table>';
+  }
+  function renderIssues() {
+    $('issuesBtn').textContent = '要確認 ' + issues.length + '件';
+    $('issuesBtn').classList.toggle('hidden', !issues.length);
+  }
+  $('issuesBtn').addEventListener('click', function () {
+    ask('確認が必要な記録（' + issues.length + '件）',
+      '<p>送信したときに、管理シート側ですでに引換済みだった・無効だった記録です。管理シートの備考にも記録されています。ブース責任者に伝えてください。</p>' + issuesTable(issues),
+      '確認した（一覧から消す）', function () { issues = []; save('nara_off_issues', issues); renderIssues(); });
+  });
+  function sendAll(silent) {
     var pending = recs.filter(function (r) { return !r.sent; });
-    if (!pending.length || sending) return;
+    if (!pending.length || sending || !cfg) return Promise.resolve();
     sending = true; $('sendBtn').disabled = true; $('sendBtn').textContent = '送信中…';
     var chunks = [];
     for (var i = 0; i < pending.length; i += 40) chunks.push(pending.slice(i, i + 40));
@@ -404,7 +479,7 @@
     chunks.forEach(function (ch) {
       chain = chain.then(function () {
         var r = ch.map(function (x) { return x.code + '.' + Math.floor(x.at / 1000) + '.' + x.id; }).join(',');
-        return jsonp({ p: 'offline_push', r: r }).then(function (d) {
+        return jsonp({ p: 'offline_push', r: r, t: termName() }).then(function (d) {
           if (!d || !d.ok) throw new Error(d && d.message || '送信に失敗しました');
           d.results.forEach(function (x) {
             var rec = recs.filter(function (y) { return y.id === x.id; })[0];
@@ -415,26 +490,27 @@
         });
       });
     });
-    chain.then(function () {
+    return chain.then(function () {
       setConn(true);
-      var label = { applied: '反映しました', already: '送信済みでした', conflict: '二重引換の可能性', unusable: '入金待ち・無効の券', not_found: '管理シートにない' };
       var count = {}; results.forEach(function (x) { count[x.result] = (count[x.result] || 0) + 1; });
-      var issues = results.filter(function (x) { return x.result === 'conflict' || x.result === 'unusable' || x.result === 'not_found'; });
-      var body = '<table class="sum">' + Object.keys(count).map(function (k) { return '<tr><td>' + esc(label[k] || k) + '</td><td><b>' + count[k] + '件</b></td></tr>'; }).join('') + '</table>';
-      if (issues.length) {
-        body += '<p class="err">確認が必要な記録があります。管理シートの備考にも記録しました。</p><table class="sum"><tr><th>結果</th><th>受注番号</th><th>氏名</th></tr>' +
-          issues.map(function (x) { return '<tr><td>' + esc(label[x.result]) + '</td><td>' + esc(x.order || x.code) + '</td><td>' + esc(x.name || '') + '</td></tr>'; }).join('') + '</table>';
+      var bad = results.filter(function (x) { return x.result === 'conflict' || x.result === 'unusable' || x.result === 'not_found'; });
+      if (bad.length) { issues = issues.concat(bad); save('nara_off_issues', issues); renderIssues(); beep('warn'); }
+      if (!silent) {
+        var body = '<table class="sum">' + Object.keys(count).map(function (k) { return '<tr><td>' + esc(LABEL[k] || k) + '</td><td><b>' + count[k] + '件</b></td></tr>'; }).join('') + '</table>';
+        if (bad.length) body += '<p class="err">確認が必要な記録があります。管理シートの備考にも記録しました。ブース責任者に伝えてください。</p>' + issuesTable(bad);
+        notice('記録を送信しました', body);
       }
-      notice('記録を送信しました', body);
       return refresh(false);
     }).catch(function (e) {
       setConn(false, e.message);
-      notice('送信できませんでした', '<p>ネットにつながってから、もう一度［記録を送信］を押してください。送信できた分は二重に反映されません。</p><p class="muted">' + esc(e.message) + '</p>');
+      if (!silent) notice('送信できませんでした', '<p>ネットにつながってから、もう一度［記録を送信］を押してください。送信できた分は二重に反映されません。</p><p class="muted">' + esc(e.message) + '</p>');
     }).then(function () {
       sending = false; $('sendBtn').textContent = '記録を送信'; renderBar(); renderHist();
     });
   }
-  $('sendBtn').addEventListener('click', sendAll);
+  $('sendBtn').addEventListener('click', function () { sendAll(false); });
+  // 自動送信：1分ごと。オフライン中は失敗するだけで、つながった時点の次の回で送られる
+  setInterval(function () { sendAll(true); }, PUSH_MS);
 
   // ---------- CSV ----------
   function csv() {
@@ -468,8 +544,8 @@
       (unsent ? '<p class="err">未送信の記録が ' + unsent + '件 あります。消すと管理シートに反映できなくなります。先に［記録を送信］してください。</p>' : '<p>記録はすべて送信済みです。</p>') +
       '<p class="muted">書き出したCSVファイルは、このボタンでは消えません。別に削除してください。</p>';
     ask('データを消去しますか？', body, unsent ? '未送信のまま消去する' : '消去する', function () {
-      try { localStorage.removeItem(K_LIST); localStorage.removeItem(K_RECS); localStorage.removeItem(K_CFG); } catch (e) {}
-      cfg = null; list = null; recs = []; hist = []; shown = []; index();
+      try { localStorage.removeItem(K_LIST); localStorage.removeItem(K_RECS); localStorage.removeItem(K_CFG); localStorage.removeItem('nara_off_issues'); } catch (e) {}
+      cfg = null; list = null; recs = []; hist = []; shown = []; issues = []; index(); renderIssues();
       $('p0').className = 'panel idle'; $('p0').textContent = 'データを消去しました';
       $('p1').className = 'panel idle'; $('p1').textContent = '';
       $('res').innerHTML = ''; renderHist(); setConn(false); renderAll();
@@ -479,6 +555,7 @@
   // ---------- 設定 ----------
   function openSetup() {
     $('setupUrl').value = cfg ? cfg.base + '?p=offline&k=' + cfg.k : '';
+    $('setupTerm').value = termName();
     $('setupErr').classList.add('hidden');
     $('setup').classList.remove('hidden');
     $('setupUrl').focus();
@@ -488,8 +565,11 @@
   $('setupSave').addEventListener('click', function () {
     var v = $('setupUrl').value.trim();
     var m = v.match(/^(https:\/\/script\.google(?:usercontent)?\.com\/[^?#\s]+?\/exec)\?(?:.*&)?k=([A-Za-z0-9]+)/);
-    if (!m) { $('setupErr').textContent = 'URLの形が違います。［URLを表示］の「オフライン照合の設定用」をそのまま貼ってください。'; $('setupErr').classList.remove('hidden'); return; }
-    cfg = { base: m[1], k: m[2] };
+    // GitHub Pages のオフライン照合URL（…/offline/Offline.html?k=…&t=…）も受け付ける
+    var g = !m && v.match(/^https:\/\/[^?#\s]+\/offline\/(?:Offline\.html)?\?(?:.*&)?k=([A-Za-z0-9]+)/);
+    if (!m && !g) { $('setupErr').textContent = 'URLの形が違います。［URLを表示］の「オフライン照合の設定用」をそのまま貼ってください。'; $('setupErr').classList.remove('hidden'); return; }
+    var tm = v.match(/[?&]t=([^&#]*)/);
+    cfg = { base: m ? m[1] : DEFAULT_BASE, k: m ? m[2] : g[1], t: cleanTerm($('setupTerm').value) || (tm ? cleanTerm(decodeURIComponent(tm[1])) : '') };
     save(K_CFG, cfg);
     $('setup').classList.add('hidden');
     refresh(true).then(function () { if (audio) focusScan(); else openStart(); });
@@ -503,6 +583,7 @@
   $('startBtn').addEventListener('click', function () {
     try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
     $('start').classList.add('hidden');
+    keepAwake();
     focusScan();
   });
 
@@ -539,7 +620,8 @@
   }
   function renderAll() {
     $('title').textContent = (list && list.eventName ? list.eventName + '　' : '') + 'オフライン照合';
-    renderBar(); renderStats();
+    $('termLabel').textContent = '端末 ' + (termName() || '-');
+    renderBar(); renderStats(); renderIssues();
   }
 
   // ---------- スキャン入力 ----------
@@ -555,6 +637,41 @@
     var raw = $('scan').value; $('scan').value = '';
     if (raw.trim()) check(toHalf(raw).trim());
   }
+  $('goBtn').addEventListener('click', function () { submitScan(); focusScan(); });
+
+  // ---------- スマホ：スキャナ用（キーボードを出さない）と手入力の切り替え ----------
+  var typing = false;
+  function setTyping(on) {
+    typing = on;
+    document.body.classList.toggle('typing', on);
+    $('typeBtn').textContent = on ? 'スキャンに戻る' : '手入力';
+    // スマホはキーボードを出さない（スキャナの入力だけ受ける）。手入力のときだけ数字キーボードを出す
+    if (TOUCH) $('scan').setAttribute('inputmode', on ? 'numeric' : 'none');
+    $('scan').placeholder = on ? '受注番号9桁／コード12桁' : '';
+    // iPhone はタップの操作の中で focus しないとキーボードが出ないので、同期で付け直す
+    $('scan').blur(); $('scan').focus();
+  }
+  $('typeBtn').addEventListener('click', function () { setTyping(!typing); });
+  if (TOUCH) {
+    $('scan').setAttribute('inputmode', 'none');
+    $('scanLabel').textContent = 'ここにスキャン（読めないときは［手入力］で受注番号9桁か引換コード12桁を入れて［照合］）';
+  } else {
+    $('typeBtn').classList.add('hidden');
+    $('scanLabel').textContent = 'ここにスキャン（スキャナ2台まで）。キーボードで受注番号9桁・引換コード12桁を打って Enter でも照合できます';
+  }
+
+  // ---------- 画面を消さない（スマホ。使える端末だけ） ----------
+  var wakeLock = null;
+  function keepAwake() {
+    if (!('wakeLock' in navigator) || wakeLock || document.visibilityState !== 'visible') return;
+    navigator.wakeLock.request('screen').then(function (l) { wakeLock = l; l.addEventListener('release', function () { wakeLock = null; }); }, function () {});
+  }
+  // タブに戻ってきたら：画面を消さない設定をやり直し、一覧と未送信の記録をすぐに更新する
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible') return;
+    keepAwake();
+    if (cfg) refresh(false);
+  });
   setInterval(function () {
     var blocked = !$('start').classList.contains('hidden') || !$('setup').classList.contains('hidden') || !$('dlg').classList.contains('hidden');
     var a = document.activeElement;
@@ -571,6 +688,10 @@
     var t = byCode[r.code];
     return { when: r.at, cls: 'ok', text: t ? t.n + '：' + t.i.join('、') : r.code, rec: r, verdict: '引換OK' };
   });
+  // GitHub Pages 版：このページを端末に保存し、オフライン中に再読み込みしても開けるようにする
+  if (/^https?:$/.test(location.protocol) && window.isSecureContext && 'serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(function () {});
+  }
   renderAll(); renderHist(); setConn(null);
   if (!cfg) openSetup();
   else { openStart(); refresh(false); }

@@ -630,7 +630,9 @@ function showUrls() {
     qr('端末B', staffUrl_(url, k, 'B')) +
     qr('端末C', staffUrl_(url, k, 'C')) +
     '</div>' +
-    row('オフライン照合の設定用（PCの「オフライン照合」に一度だけ貼る）', url + '?p=offline&k=' + k) +
+    '<p>オフライン照合は、各スマホのスキャン画面の［オフライン照合へ］から開きます（合言葉・端末名は引き継がれます）。</p>' +
+    row('オフライン照合の設定用（PCに保存した「オフライン照合」に一度だけ貼る）', url + '?p=offline&k=' + k) +
+    (offlinePageUrl_() ? row('オフライン照合（PCのブラウザでネット上の版を開く場合。端末名 PC）', offlinePageUrl_() + '?k=' + encodeURIComponent(k) + '&t=PC') : '') +
     row('Apps ScriptのURL（GitHubの引換券ページ index.html の GAS_URL に貼る）', url) +
     '<p>お客様にお知らせするURL（メール・商品ページ）は、GitHub Pages の引換券ページです。</p>' +
     '<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>' +
@@ -659,7 +661,7 @@ function doGet(e) {
       return HtmlService.createHtmlOutput('<p style="font-family:sans-serif;padding:24px">URLが正しくありません。</p>');
     }
     return htmlTemplate_('Staff', {
-      bootJson: jsonForHtml_({ key: p.k, terminal: String(p.t || '').slice(0, 20), eventName: cfg.eventName }),
+      bootJson: jsonForHtml_({ key: p.k, terminal: String(p.t || '').slice(0, 20), eventName: cfg.eventName, offlineUrl: offlinePageUrl_() }),
     }).setTitle('引換スキャン' + (p.t ? '（' + p.t + '）' : ''));
   }
   return htmlTemplate_('Ticket', {
@@ -850,35 +852,54 @@ function getStats(key) {
 // ===================== 当日リスト（紙の控え） =====================
 
 function buildPrintList() {
+  // 紙の控え：PCもスキャナも使えないときに、この紙で照合する。受注番号順・1冊
+  // 照合したら［済］に✓、引換時刻（時:分）と担当者の名前（1文字でよい）を書く。後でシステムに入力し直す
   const ss = SpreadsheetApp.getActive();
-  const rows = readTickets_()
+  const cfg = getConfig_();
+  const tickets = readTickets_()
     .filter(function (r) { return r.v[COL.STATUS] === STATUS.UNUSED || r.v[COL.STATUS] === STATUS.USED; })
-    .sort(function (a, b) { return Number(a.v[COL.ORDER]) - Number(b.v[COL.ORDER]); })
-    .map(function (r) {
-      return ['□', r.v[COL.ORDER], r.v[COL.NAME], r.v[COL.ITEMS], qtyLabel_(r.v[COL.QTY]),
-        String(r.v[COL.CODE]).slice(-4), r.v[COL.STATUS] === STATUS.USED ? '済' : ''];
-    });
+    .sort(function (a, b) { return Number(a.v[COL.ORDER]) - Number(b.v[COL.ORDER]); });
+  const rows = tickets.map(function (r) {
+    const used = r.v[COL.STATUS] === STATUS.USED;
+    return [used ? '済' : '□', r.v[COL.ORDER], r.v[COL.NAME], qtyLabel_(r.v[COL.QTY]),
+      String(r.v[COL.CODE]).slice(-4), used ? fmt_(r.v[COL.USED_AT], 'HH:mm') : '', used ? '(' + r.v[COL.TERMINAL] + ')' : ''];
+  });
+  const sets = tickets.reduce(function (n, r) { return n + (Number(r.v[COL.QTY]) || 0); }, 0);
   let sh = ss.getSheetByName(SHEET_PRINT);
-  if (sh) sh.clear(); else sh = ss.insertSheet(SHEET_PRINT);
-  const head = [['済', '受注番号', '氏名', '引換内容', '渡す数量', 'コード下4桁', '作成時点']];
-  sh.getRange(1, 1, 1, 7).setValues(head).setFontWeight('bold').setBackground('#F5F3EE');
+  if (sh) { sh.clear(); sh.clearFormats(); } else sh = ss.insertSheet(SHEET_PRINT);
+  const N = 7;
+  sh.getRange(1, 1, 1, N).merge()
+    .setValue((cfg.eventName || '') + ' 当日リスト（紙の控え）　' + fmt_(now_(), 'M/d HH:mm') + ' 作成　' + rows.length + '件・計' + sets + 'セット')
+    .setFontWeight('bold').setFontSize(12);
+  sh.getRange(2, 1, 1, N).setValues([['済', '受注番号', '氏名', '渡す数量', 'コード下4桁', '引換時刻', '担当']])
+    .setFontWeight('bold').setBackground('#E8E5DC').setHorizontalAlignment('center');
   if (rows.length) {
-    sh.getRange(2, 2, rows.length, 1).setNumberFormat('@');
-    sh.getRange(2, 6, rows.length, 1).setNumberFormat('@');
-    sh.getRange(2, 1, rows.length, 7).setValues(rows);
+    const body = sh.getRange(3, 1, rows.length, N);
+    sh.getRange(3, 2, rows.length, 1).setNumberFormat('@');
+    sh.getRange(3, 5, rows.length, 1).setNumberFormat('@');
+    body.setValues(rows).setFontSize(13).setVerticalAlignment('middle');
+    sh.getRange(3, 1, rows.length, 1).setHorizontalAlignment('center').setFontSize(15);
+    sh.getRange(3, 2, rows.length, 1).setFontFamily('Roboto Mono').setFontWeight('bold');
+    sh.getRange(3, 4, rows.length, 2).setHorizontalAlignment('center');
+    sh.setRowHeights(3, rows.length, 30);
+    sh.getRange(2, 1, rows.length + 1, N).setBorder(true, true, true, true, true, true, '#999999', SpreadsheetApp.BorderStyle.SOLID);
+    // 5行ごとに太線（目で追いやすくする）
+    for (let i = 5; i < rows.length; i += 5) {
+      sh.getRange(2 + i, 1, 1, N).setBorder(null, null, true, null, null, null, '#1E1E22', SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+    }
   }
-  sh.setFrozenRows(1);
-  sh.setColumnWidth(1, 36); sh.setColumnWidth(3, 140); sh.setColumnWidth(4, 360);
-  SpreadsheetApp.getUi().alert('「当日リスト」を作成しました（' + rows.length + '件・受注番号順）。\n［ファイル］→［印刷］で印刷してください。');
+  sh.setFrozenRows(2);   // 印刷すると、2ページ目以降にも見出しが出る
+  [36, 110, 150, 150, 80, 80, 70].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+  SpreadsheetApp.getUi().alert('「当日リスト」を作成しました（' + rows.length + '件・受注番号順）。\n［ファイル］→［印刷］で A4 縦・「幅に合わせる」で印刷してください。\n作成時点で引換済みの券は「済」と時刻が入っています。');
 }
 
 
-// ===================== オフライン照合（Wi-Fiが使えないとき用のPC） =====================
+// ===================== オフライン照合（通信できないとき用。PC・スマホ） =====================
 //
-// PCのブラウザで開く「オフライン照合.html」から呼ばれる。ファイルから開いたページでも
-// 確実に届くよう、JSONP（<script>での読み込み）で応答する。
+// オフライン照合ページ（PCに保存した Offline.html、またはスマホで開く GitHub Pages 版）から呼ばれる。
+// ファイルから開いたページでも確実に届くよう、JSONP（<script>での読み込み）で応答する。
 //   ?p=offline_list&k=合言葉&cb=関数名        → 引換券の一覧（メール・住所・電話は含めない）
-//   ?p=offline_push&k=合言葉&cb=関数名&r=記録  → オフライン中の引換記録を反映
+//   ?p=offline_push&k=合言葉&cb=関数名&r=記録&t=端末名  → オフライン中の引換記録を反映（端末は「オフライン＋端末名」）
 //      r = 「引換コード.引換時刻(UNIX秒).記録ID」をカンマ区切り（1回40件まで）
 
 const OFFLINE_TERMINAL = 'オフライン';
@@ -892,7 +913,7 @@ function offlineApi_(p) {
   try {
     if (!checkStaffKey_(p.k)) body = { ok: false, error: 'KEY', message: '設定用URLが古いか、正しくありません。最新のURLを貼り直してください。' };
     else if (p.p === 'offline_list') body = offlineList_();
-    else body = offlinePush_(String(p.r || ''));
+    else body = offlinePush_(String(p.r || ''), p.t);
   } catch (err) {
     body = { ok: false, error: 'SERVER', message: String(err && err.message || err) };
   }
@@ -919,7 +940,9 @@ function offlineList_() {
  * 結果: applied（反映）/ already（送信済み）/ conflict（オンラインでも引換済＝二重引換の可能性）
  *       / not_found / unusable（入金待ち・無効）
  */
-function offlinePush_(raw) {
+function offlinePush_(raw, term) {
+  // 端末名（A・B・C・PC など）を付けて「オフラインA」のように記録する。古いページは端末名なし＝「オフライン」
+  const terminal = OFFLINE_TERMINAL + toHalf_(term).replace(/[^0-9A-Za-z]/g, '').toUpperCase().slice(0, 6);
   const recs = raw.split(',').map(function (x) {
     const a = x.split('.');
     return { code: normCode_(a[0]), at: Number(a[1]) * 1000, id: String(a[2] || '').replace(/[^\w-]/g, '').slice(0, 20) };
@@ -934,7 +957,7 @@ function offlinePush_(raw) {
       const hit = byCode[rec.code];
       const when = new Date(rec.at);
       if (!hit) {
-        log_(OFFLINE_TERMINAL, 'オフライン反映', 'NOT_FOUND', rec.code, '', '記録ID ' + rec.id);
+        log_(terminal, 'オフライン反映', 'NOT_FOUND', rec.code, '', '記録ID ' + rec.id);
         return { id: rec.id, code: rec.code, result: 'not_found' };
       }
       const v = hit.v;
@@ -945,19 +968,19 @@ function offlinePush_(raw) {
       if (v[COL.STATUS] === STATUS.UNUSED) {
         v[COL.STATUS] = STATUS.USED;
         v[COL.USED_AT] = when;
-        v[COL.TERMINAL] = OFFLINE_TERMINAL;
+        v[COL.TERMINAL] = terminal;
         result = 'applied';
       } else if (v[COL.STATUS] === STATUS.USED) {
         result = 'conflict';
-        v[COL.NOTE] = joinNote_(v[COL.NOTE], '二重引換の可能性：オフライン ' + fmt_(when, 'HH:mm:ss') +
+        v[COL.NOTE] = joinNote_(v[COL.NOTE], '二重引換の可能性：' + terminal + ' ' + fmt_(when, 'HH:mm:ss') +
           '／先の引換 ' + fmt_(v[COL.USED_AT], 'HH:mm:ss') + ' ' + v[COL.TERMINAL]);
       } else {
         result = 'unusable';
-        v[COL.NOTE] = joinNote_(v[COL.NOTE], 'オフラインで引換（' + fmt_(when, 'HH:mm:ss') + '）時点の状態：' + v[COL.STATUS]);
+        v[COL.NOTE] = joinNote_(v[COL.NOTE], terminal + 'で引換（' + fmt_(when, 'HH:mm:ss') + '）時点の状態：' + v[COL.STATUS]);
       }
       v[COL.NOTE] = joinNote_(v[COL.NOTE], tag);
       writeTicketRow_(hit.row, v);
-      log_(OFFLINE_TERMINAL, 'オフライン反映', result.toUpperCase(), rec.code, v[COL.ORDER], fmt_(when, 'HH:mm:ss'));
+      log_(terminal, 'オフライン反映', result.toUpperCase(), rec.code, v[COL.ORDER], fmt_(when, 'HH:mm:ss'));
       return { id: rec.id, code: rec.code, result: result, order: v[COL.ORDER], name: v[COL.NAME] };
     });
     return { ok: true, results: results };
@@ -1009,6 +1032,13 @@ function staffApi_(p) {
   }
   return ContentService.createTextOutput(cb + '(' + JSON.stringify(body) + ');')
     .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
+
+/** オフライン照合ページ（GitHub Pages 版）のURL。スキャン画面URL の staff/ を offline/Offline.html に置き換える */
+function offlinePageUrl_() {
+  const base = String(getConfig_().staffPageUrl || '').trim();
+  if (!/^https:\/\/.+\/staff\/?$/.test(base)) return '';
+  return base.replace(/staff\/?$/, 'offline/Offline.html');
 }
 
 /** スキャン画面のURL（設定があれば GitHub Pages、なければ Apps Script） */

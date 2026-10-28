@@ -21,6 +21,10 @@
   .top .title { font-weight: 700; font-size: 16px; flex: 1; min-width: 180px; }
   .top .term { font-size: 13px; background: #fff; color: var(--ink); border-radius: 999px; padding: 3px 12px; font-weight: 700; cursor: pointer; }
   .stats { font-size: 13px; opacity: .9; }
+  .top .offbtn { font-size: 13px; font-weight: 700; background: #FFE3A3; color: #6B4500; border: 0; border-radius: 999px; padding: 4px 12px; }
+  .slow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 16px; background: #FFE3A3; color: #6B4500; font-weight: 700; font-size: 15px; }
+  .slow span { flex: 1; min-width: 200px; }
+  .slow button { font-weight: 700; background: var(--ink); color: #fff; border-color: var(--ink); }
   .stats b { font-size: 16px; }
   main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; padding: 16px; max-width: 1200px; margin: 0 auto; }
   @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
@@ -83,6 +87,11 @@
   <div class="title" id="title">引換スキャン</div>
   <div class="stats" id="stats">集計を読み込み中…</div>
   <div class="term" id="term" title="端末名を変更">端末 -</div>
+  <button class="offbtn hidden" id="offBtn" type="button">オフライン照合へ</button>
+</div>
+<div class="slow hidden" id="slow">
+  <span id="slowMsg">通信が遅くなっています。ブース責任者に伝え、オフライン照合に切り替えてください。</span>
+  <button type="button" id="slowBtn">オフライン照合へ</button>
 </div>
 
 <main>
@@ -139,7 +148,7 @@
     var q = new URLSearchParams(location.search), k = q.get('k') || '', t = q.get('t') || '';
     try { if (k) localStorage.setItem('nb_staff_key', k); else k = localStorage.getItem('nb_staff_key') || ''; } catch (e) {}
     if (q.get('k')) { try { history.replaceState(null, '', location.pathname + (t ? '?t=' + encodeURIComponent(t) : '')); } catch (e) {} }
-    return { key: k, terminal: t, eventName: EVENT_NAME };
+    return { key: k, terminal: t, eventName: EVENT_NAME, offlineUrl: '../offline/Offline.html' };
   })();
 
   // Apps Script への問い合わせ（JSONP）。元の google.script.run と同じ形で呼べるようにする
@@ -308,15 +317,41 @@
     pump();
   }
 
+  // ---------- 通信の遅れの見張り ----------
+  // 5秒以上かかった照会が2回続く、または通信エラーが2回続いたら、オフライン照合への切り替えを促す
+  var SLOW_MS = 5000, slowRun = 0, errRun = 0, busyTimer = null;
+  function offlineUrl() {
+    if (!BOOT.offlineUrl) return '';
+    return BOOT.offlineUrl + '?k=' + encodeURIComponent(BOOT.key || '') + '&t=' + encodeURIComponent(terminal || '');
+  }
+  function openOffline() { var u = offlineUrl(); if (u) window.open(u, '_blank'); }
+  if (BOOT.offlineUrl) $('offBtn').classList.remove('hidden');
+  $('offBtn').addEventListener('click', openOffline);
+  $('slowBtn').addEventListener('click', openOffline);
+  function updateSlow() {
+    var on = slowRun >= 2 || errRun >= 2;
+    $('slow').classList.toggle('hidden', !on);
+    $('slowMsg').textContent = errRun >= 2
+      ? '通信エラーが続いています。ブース責任者に伝え、オフライン照合に切り替えてください。'
+      : '通信が遅くなっています（1件に5秒以上）。ブース責任者に伝え、オフライン照合に切り替えてください。';
+    $('slowBtn').classList.toggle('hidden', !BOOT.offlineUrl);
+  }
+
   function pump() {
     if (busy || !queue.length) return;
     busy = true;
     var raw = queue.shift();
+    var started = Date.now();
     showBusy(raw);
     google.script.run
-      .withSuccessHandler(function (r) { busy = false; showResult(r); refreshStatsSoon(); pump(); })
+      .withSuccessHandler(function (r) {
+        busy = false; clearTimeout(busyTimer);
+        errRun = 0; slowRun = Date.now() - started >= SLOW_MS ? slowRun + 1 : 0; updateSlow();
+        showResult(r); refreshStatsSoon(); pump();
+      })
       .withFailureHandler(function (err) {
-        busy = false;
+        busy = false; clearTimeout(busyTimer);
+        if (!/スキャン用URLが無効/.test(String((err && err.message) || ''))) { errRun++; updateSlow(); }
         showNetError(raw, err);
         pump();
       })
@@ -327,6 +362,11 @@
     var p = $('panel');
     p.className = 'panel busy';
     p.innerHTML = '<div class="verdict" style="font-size:30px">照会中…</div><div class="why">' + esc(digits(raw)) + '</div>';
+    clearTimeout(busyTimer);
+    busyTimer = setTimeout(function () {
+      if (!busy) return;
+      p.innerHTML += '<div class="why" style="color:var(--warn);font-weight:700">通信が遅れています。このまま待つか、続くようならオフライン照合に切り替えてください。</div>';
+    }, SLOW_MS);
   }
 
   function itemsHtml(t) {

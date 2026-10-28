@@ -13,7 +13,7 @@ BOOT = """  // ===== 設定 =====
     var q = new URLSearchParams(location.search), k = q.get('k') || '', t = q.get('t') || '';
     try { if (k) localStorage.setItem('nb_staff_key', k); else k = localStorage.getItem('nb_staff_key') || ''; } catch (e) {}
     if (q.get('k')) { try { history.replaceState(null, '', location.pathname + (t ? '?t=' + encodeURIComponent(t) : '')); } catch (e) {} }
-    return { key: k, terminal: t, eventName: EVENT_NAME };
+    return { key: k, terminal: t, eventName: EVENT_NAME, offlineUrl: '../offline/Offline.html' };
   })();
 
   // Apps Script への問い合わせ（JSONP）。元の google.script.run と同じ形で呼べるようにする
