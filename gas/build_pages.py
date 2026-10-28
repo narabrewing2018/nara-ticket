@@ -20,13 +20,20 @@ CONFIG = """  // ===== 設定（ここだけ書き換える） =====
       withFailureHandler: function (f) { return make(ok, f); },
       lookupTicket: function (o, m) {
         var cb = '__nb_cb' + Date.now() + Math.floor(Math.random() * 1000);
-        var s = document.createElement('script');
+        var s = null, settled = false;
         var timer = setTimeout(function () { finish(); ng && ng(new Error('TIMEOUT')); }, 20000);
-        function finish() { clearTimeout(timer); try { delete window[cb]; } catch (e) { window[cb] = undefined; } if (s.parentNode) s.parentNode.removeChild(s); }
+        function finish() { settled = true; clearTimeout(timer); try { delete window[cb]; } catch (e) { window[cb] = undefined; } if (s && s.parentNode) s.parentNode.removeChild(s); }
         window[cb] = function (r) { finish(); ok && ok(r); };
-        s.onerror = function () { finish(); ng && ng(new Error('NETWORK')); };
-        s.src = GAS_URL + '?p=ticket_lookup&o=' + encodeURIComponent(o) + '&m=' + encodeURIComponent(m) + '&cb=' + cb;
-        document.head.appendChild(s);
+        // 失敗したら Google のログイン情報を送らない読み込み（crossorigin）でやり直す（複数アカウントでログイン中のスマホ対策）
+        function load(anon) {
+          if (s && s.parentNode) s.parentNode.removeChild(s);
+          s = document.createElement('script');
+          if (anon) s.crossOrigin = 'anonymous';
+          s.onerror = function () { if (settled) return; if (!anon) { load(true); return; } finish(); ng && ng(new Error('NETWORK')); };
+          s.src = GAS_URL + '?p=ticket_lookup&o=' + encodeURIComponent(o) + '&m=' + encodeURIComponent(m) + '&cb=' + cb;
+          document.head.appendChild(s);
+        }
+        load(false);
       }
     };
   })() } };

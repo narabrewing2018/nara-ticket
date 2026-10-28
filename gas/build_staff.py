@@ -17,19 +17,33 @@ BOOT = """  // ===== 設定 =====
   })();
 
   // Apps Script への問い合わせ（JSONP）。元の google.script.run と同じ形で呼べるようにする
+  var NB_ANON = false;   // ログイン情報を送らない読み込みで通じたら、以後はそちらを使う
   window.google = { script: { run: (function make(ok, ng) {
     var api = { withSuccessHandler: function (f) { return make(f, ng); }, withFailureHandler: function (f) { return make(ok, f); } };
     ['redeem', 'undoRedeem', 'searchTickets', 'getStats'].forEach(function (fn) {
       api[fn] = function () {
         var args = Array.prototype.slice.call(arguments);
         var cb = '__nb_cb' + Date.now() + Math.floor(Math.random() * 100000);
-        var s = document.createElement('script');
+        var s = null, settled = false;
         var timer = setTimeout(function () { finish(); ng && ng(new Error('通信がタイムアウトしました')); }, 20000);
-        function finish() { clearTimeout(timer); try { delete window[cb]; } catch (e) { window[cb] = undefined; } if (s.parentNode) s.parentNode.removeChild(s); }
+        function finish() { settled = true; clearTimeout(timer); try { delete window[cb]; } catch (e) { window[cb] = undefined; } if (s && s.parentNode) s.parentNode.removeChild(s); }
         window[cb] = function (r) { finish(); if (r && r.ok) { ok && ok(r.result); } else { ng && ng(new Error((r && r.message) || 'エラーが発生しました')); } };
-        s.onerror = function () { finish(); ng && ng(new Error('通信できませんでした（電波を確認してください）')); };
-        s.src = GAS_URL + '?p=staff_api&fn=' + fn + '&a=' + encodeURIComponent(JSON.stringify(args)) + '&cb=' + cb;
-        document.head.appendChild(s);
+        // 1回目は通常の読み込み。失敗したら Google のログイン情報を送らない読み込み（crossorigin）でやり直す。
+        // スマホのブラウザで Google アカウントが複数ログインしていると、Apps Script がエラーを返すことがあるため
+        function load(anon) {
+          if (s && s.parentNode) s.parentNode.removeChild(s);
+          s = document.createElement('script');
+          if (anon) s.crossOrigin = 'anonymous';
+          s.onerror = function () {
+            if (settled) return;
+            if (!anon && !NB_ANON) { load(true); return; }
+            finish(); ng && ng(new Error('通信できませんでした（電波を確認してください）'));
+          };
+          s.onload = function () { if (anon && settled) NB_ANON = true; };
+          s.src = GAS_URL + '?p=staff_api&fn=' + fn + '&a=' + encodeURIComponent(JSON.stringify(args)) + '&cb=' + cb;
+          document.head.appendChild(s);
+        }
+        load(NB_ANON);
         return api;
       };
     });

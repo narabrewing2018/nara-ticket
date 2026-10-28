@@ -261,20 +261,33 @@
   index();
 
   // ---------- 通信（JSONP。ファイルから開いても届くように <script> で読み込む） ----------
-  var seq = 0;
+  var seq = 0, jsonpAnon = false;   // ログイン情報を送らない読み込みで通じたら、以後はそちらを使う
   function jsonp(params) {
     if (window.OFFLINE_TRANSPORT) return window.OFFLINE_TRANSPORT(params);   // プレビュー用
     return new Promise(function (resolve, reject) {
       if (!cfg) return reject(new Error('NOCFG'));
       var cb = '__nara_cb' + (++seq) + '_' + Date.now();
-      var s = document.createElement('script');
+      var s = null, settled = false;
       var timer = setTimeout(function () { done(); reject(new Error('TIMEOUT')); }, TIMEOUT_MS);
-      function done() { clearTimeout(timer); try { delete window[cb]; } catch (e) { window[cb] = undefined; } if (s.parentNode) s.parentNode.removeChild(s); }
+      function done() { settled = true; clearTimeout(timer); try { delete window[cb]; } catch (e) { window[cb] = undefined; } if (s && s.parentNode) s.parentNode.removeChild(s); }
       window[cb] = function (data) { done(); resolve(data); };
-      s.onerror = function () { done(); reject(new Error('NETWORK')); };
       var q = Object.keys(params).map(function (k) { return k + '=' + encodeURIComponent(params[k]); }).join('&');
-      s.src = cfg.base + '?' + q + '&k=' + encodeURIComponent(cfg.k) + '&cb=' + cb + '&_=' + Date.now();
-      document.head.appendChild(s);
+      var url = cfg.base + '?' + q + '&k=' + encodeURIComponent(cfg.k) + '&cb=' + cb + '&_=' + Date.now();
+      // 失敗したら Google のログイン情報を送らない読み込み（crossorigin）でやり直す（複数アカウントでログイン中のスマホ対策）
+      function load(anon) {
+        if (s && s.parentNode) s.parentNode.removeChild(s);
+        s = document.createElement('script');
+        if (anon) s.crossOrigin = 'anonymous';
+        s.onerror = function () {
+          if (settled) return;
+          if (!anon && !jsonpAnon) { load(true); return; }
+          done(); reject(new Error('NETWORK'));
+        };
+        s.onload = function () { if (anon && settled) jsonpAnon = true; };
+        s.src = url;
+        document.head.appendChild(s);
+      }
+      load(jsonpAnon);
     });
   }
 
@@ -650,9 +663,18 @@
     if (!v) return;
     show({ cls: 'warn', verdict: '読み取りが途中で止まりました', why: 'もう一度読み取ってください（' + esc(digits(v) || v) + ' は消しました）', beep: 'warn' });
   }
+  // スキャナから同じ12桁が2回続けて届くことがある（iPhone で確認）。ちょうど同じ番号の繰り返しなら1回分にする
+  function undouble(v) {
+    var d = digits(v);
+    if (d.length > CODE_LEN && d.length % CODE_LEN === 0) {
+      var c = d.slice(0, CODE_LEN);
+      if (new Array(d.length / CODE_LEN + 1).join(c) === d) return c;
+    }
+    return v;
+  }
   function submitScan() {
     clearTimeout(idleTimer); clearTimeout(staleTimer);
-    var raw = $('scan').value; $('scan').value = ''; manualInput = false; lastInputAt = 0;
+    var raw = undouble($('scan').value); $('scan').value = ''; manualInput = false; lastInputAt = 0;
     if (!raw.trim()) return;
     // 前の手入力検索の文字と結果は、次のスキャンで消す
     if (document.activeElement !== $('q')) { $('q').value = ''; $('res').innerHTML = ''; }

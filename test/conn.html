@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>通信の確認｜奈良醸造</title>
+<style>
+  body { margin: 0; background: #F5F3EE; color: #1E1E22; font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif; }
+  .wrap { max-width: 520px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  p { font-size: 13.5px; line-height: 1.6; }
+  .row { background: #fff; border-radius: 10px; padding: 12px; margin: 10px 0; font-size: 14px; }
+  .row b { display: block; margin-bottom: 4px; }
+  .ok { color: #1F7A3A; font-weight: 700; } .ng { color: #B0463B; font-weight: 700; } .wait { color: #6B6A66; }
+  button { font: inherit; font-size: 16px; font-weight: 700; padding: 12px 18px; border: 0; border-radius: 10px; background: #1E1E22; color: #fff; width: 100%; }
+  .ua { font-size: 11px; color: #6B6A66; word-break: break-all; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>通信の確認（スタッフ用）</h1>
+  <p>スキャン画面で「通信エラー」が出るスマホで開き、［確認する］を押してください。結果の画面をスクリーンショットで送ってください。合言葉や個人情報は使いません。</p>
+  <button id="go">確認する</button>
+  <div id="out"></div>
+  <p class="ua" id="ua"></p>
+</div>
+<script>
+  var GAS_URL = 'https://script.google.com/macros/s/AKfycbwOZQWB0Kn6lH4wSaknhrFCGK9XzX4omndBeGo65lycxzZCMKBH9kACFQehWMR3XFSJ/exec';
+  document.getElementById('ua').textContent = navigator.userAgent;
+  var TESTS = [
+    ['1. スキャン画面と同じ方法（ログイン情報あり）', 'p=staff_api&fn=getStats&a=' + encodeURIComponent('["test"]'), false],
+    ['2. ログイン情報を送らない方法（今回の対策）', 'p=staff_api&fn=getStats&a=' + encodeURIComponent('["test"]'), true],
+    ['3. 引換券ページと同じ方法（ログイン情報あり）', 'p=ticket_lookup&o=1&m=' + encodeURIComponent('test@example.com'), false],
+    ['4. 引換券ページ・ログイン情報を送らない方法', 'p=ticket_lookup&o=1&m=' + encodeURIComponent('test@example.com'), true]
+  ];
+  function run(t, i) {
+    return new Promise(function (resolve) {
+      var row = document.createElement('div'); row.className = 'row';
+      row.innerHTML = '<b>' + t[0] + '</b><span class="wait">確認中…</span>';
+      document.getElementById('out').appendChild(row);
+      var span = row.querySelector('span'), started = Date.now();
+      var cb = '__t' + i + '_' + Date.now(), s = document.createElement('script'), fin = false;
+      function end(cls, msg) { if (fin) return; fin = true; clearTimeout(timer); span.className = cls; span.textContent = msg + '（' + ((Date.now() - started) / 1000).toFixed(1) + '秒）'; if (s.parentNode) s.parentNode.removeChild(s); resolve(); }
+      var timer = setTimeout(function () { end('ng', '×　時間切れ（返事なし）'); }, 15000);
+      window[cb] = function (r) { end('ok', '○　届きました（返事：' + String((r && (r.message || (r.ok ? 'OK' : ''))) || 'OK').slice(0, 40) + '）'); };
+      if (t[2]) s.crossOrigin = 'anonymous';
+      s.onerror = function () { end('ng', '×　通信できませんでした'); };
+      s.src = GAS_URL + '?' + t[1] + '&cb=' + cb + '&_=' + Date.now();
+      document.head.appendChild(s);
+    });
+  }
+  document.getElementById('go').addEventListener('click', function () {
+    document.getElementById('out').innerHTML = '';
+    TESTS.reduce(function (p, t, i) { return p.then(function () { return run(t, i); }); }, Promise.resolve());
+  });
+</script>
+</body>
+</html>

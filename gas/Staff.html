@@ -315,9 +315,18 @@
     }
   }, true);
 
+  // スキャナから同じ12桁が2回続けて届くことがある（iPhone で確認）。ちょうど同じ番号の繰り返しなら1回分にする
+  function undouble(v) {
+    var d = digits(v);
+    if (d.length > CODE_LEN && d.length % CODE_LEN === 0) {
+      var c = d.slice(0, CODE_LEN);
+      if (new Array(d.length / CODE_LEN + 1).join(c) === d) return c;
+    }
+    return v;
+  }
   function submitScan() {
     clearTimeout(idleTimer); clearTimeout(staleTimer);
-    var raw = $('scan').value;
+    var raw = undouble($('scan').value);
     $('scan').value = '';
     if (!raw.trim()) return;
     // 前の手入力検索の文字と結果は、次のスキャンで消す
