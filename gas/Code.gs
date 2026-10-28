@@ -39,6 +39,7 @@ const CONFIG_ITEMS = [
   ['スキャン画面URL', 'https://narabrewing2018.github.io/nara-ticket/staff/', 'GitHub Pages のスキャン画面のURL。［URLを表示］のQRコードに使う。空ならApps Scriptのスキャン画面を使う'],
   ['WebアプリURL', '', 'デプロイ画面に表示されたウェブアプリのURL（…/exec）。カラーミー連携とURL表示に使う。空ならApps Scriptが返すURLを使う'],
   ['1セットの本数', '', '引換券1枚（数量1）で渡す缶の本数（例: 2）。入れると画面に「3セット（缶6本）」と表示する。空なら「計 ○点」のまま'],
+  ['引換券ページからカラーミーに照会', 'TRUE', 'TRUE＝シートにない注文は、お客様が引換券ページを開いた時点でカラーミーに確認して発行する（販売期間中）。FALSE＝シートだけで答える（販売終了後〜当日。大量のアクセスでAPIの上限を使い切らないため）'],
   ['バーコード表示', 'CODE128', 'CODE128（1次元バーコードのみ。NETUM NT-1228BC 等のCCDスキャナ用）／ QR+CODE128 ／ QR'],
 ];
 
@@ -63,6 +64,7 @@ function onOpen() {
 }
 
 function setupSheets() {
+  adminUi_();
   const ss = SpreadsheetApp.getActive();
 
   let t = ss.getSheetByName(SHEET_TICKETS) || ss.insertSheet(SHEET_TICKETS);
@@ -123,6 +125,7 @@ function getConfig_() {
       .filter(String),
     since: get('受注の検索開始日'),
     requirePaid: !/^(false|いいえ|0|no)$/i.test(get('入金済みのみ発行')),
+    liveLookup: !/^(false|いいえ|0|no)$/i.test(get('引換券ページからカラーミーに照会')),
     eventName: get('イベント名'),
     eventInfo: get('引換日時・場所'),
     contact: get('お問い合わせ先'),
@@ -142,6 +145,14 @@ function qtyLabel_(qty) {
 }
 
 function props_() { return PropertiesService.getScriptProperties(); }
+
+/**
+ * 管理用（メニュー）の関数の先頭で呼ぶ。スプレッドシートの外（ウェブアプリ経由など）から
+ * 呼ばれた場合は、ここでエラーになり、何も変更しないまま止まる。
+ */
+function adminUi_() {
+  return SpreadsheetApp.getUi();
+}
 
 /** ウェブアプリのURL。ScriptApp が別のデプロイのURLを返すことがあるため、「設定」シートの値を優先する */
 function webAppUrl_() {
@@ -198,12 +209,34 @@ function readTickets_() {
   return sh.getRange(2, 1, last - 1, HEADERS.length).getValues().map(function (v, i) {
     v[COL.CODE] = String(v[COL.CODE]).trim();
     v[COL.ORDER] = String(v[COL.ORDER]).trim();
+    TEXT_COLS_.forEach(function (c) { v[c] = cellRead_(v[c]); });
     return { row: i + 2, v: v };
   }).filter(function (r) { return r.v[COL.CODE] || r.v[COL.ORDER]; });
 }
 
+// ---------- 数式インジェクション対策 ----------
+// カラーミーから来る文字（氏名・メール・商品名）が = + - @ で始まると、シートに書いたとき数式として動く。
+// シートに書く直前だけ先頭に ' を付けて文字として保存し、読むときに外す（メモリ上の値は元のまま）。
+const TEXT_COLS_ = [COL.NAME, COL.MAIL, COL.ITEMS];
+
+function cellSafe_(s) {
+  s = String(s == null ? '' : s);
+  return /^[=+\-@]/.test(s) ? "'" + s : s;
+}
+
+function cellRead_(s) {
+  s = String(s == null ? '' : s);
+  return /^'[=+\-@]/.test(s) ? s.slice(1) : s;
+}
+
+function toSheetRow_(v) {
+  const out = v.slice();
+  TEXT_COLS_.forEach(function (c) { out[c] = cellSafe_(out[c]); });
+  return out;
+}
+
 function writeTicketRow_(row, values) {
-  ticketSheet_().getRange(row, 1, 1, HEADERS.length).setValues([values]);
+  ticketSheet_().getRange(row, 1, 1, HEADERS.length).setValues([toSheetRow_(values)]);
 }
 
 function appendTickets_(rows) {
@@ -211,7 +244,7 @@ function appendTickets_(rows) {
   const sh = ticketSheet_();
   const start = Math.max(sh.getLastRow(), 1) + 1;
   sh.getRange(start, 1, rows.length, 2).setNumberFormat('@');
-  sh.getRange(start, 1, rows.length, HEADERS.length).setValues(rows);
+  sh.getRange(start, 1, rows.length, HEADERS.length).setValues(rows.map(toSheetRow_));
 }
 
 function log_(terminal, action, result, code, order, detail) {
@@ -361,7 +394,18 @@ function newRow_(info, code, cfg) {
  */
 const MAX_DETAIL_FETCH = 80;
 
+/**
+ * 5分ごとのトリガーから呼ばれる（トリガーの関数名なので公開のまま）。
+ * 外から連続で呼ばれても API を使い切らないよう、前回から60秒以内なら何もしない。
+ */
 function syncOrders() {
+  const cache = CacheService.getScriptCache();
+  if (cache.get('sync_recent')) return { skipped: true };
+  cache.put('sync_recent', '1', 60);
+  return syncOrdersCore_();
+}
+
+function syncOrdersCore_() {
   const cfg = getConfig_();
   if (!cfg.productIds.length) throw new Error('「設定」シートの［対象商品ID］が空です。');
   const sales = listSales_(cfg.since);
@@ -403,7 +447,7 @@ function syncOrders() {
     rows.forEach(function (r) {
       const f = flags[r.v[COL.ORDER]];
       if (f && applyFlags_(r.v, f, cfg)) {
-        sh.getRange(r.row, 1, 1, HEADERS.length).setValues([r.v]);
+        writeTicketRow_(r.row, r.v);
         updated++;
       }
     });
@@ -412,7 +456,7 @@ function syncOrders() {
     infos.forEach(function (info) {
       const r = byOrder[info.order];
       if (r) {
-        if (r.row > 0 && applyInfo_(r.v, info, cfg)) { sh.getRange(r.row, 1, 1, HEADERS.length).setValues([r.v]); updated++; }
+        if (r.row > 0 && applyInfo_(r.v, info, cfg)) { writeTicketRow_(r.row, r.v); updated++; }
       } else {
         const v = newRow_(info, newCode_(codes), cfg);
         added.push(v);
@@ -476,22 +520,25 @@ function appendSeen_(ids) {
 }
 
 function syncOrdersFromMenu() {
-  const r = syncOrders();
-  SpreadsheetApp.getUi().alert('取り込み完了\n\n受注 ' + r.sales + ' 件（明細を確認 ' + r.fetched + ' 件' +
+  const ui = adminUi_();
+  const r = syncOrdersCore_();
+  ui.alert('取り込み完了\n\n受注 ' + r.sales + ' 件（明細を確認 ' + r.fetched + ' 件' +
     (r.deferred ? '、' + r.deferred + ' 件は次回' : '') + '）\n引換券 新規 ' + r.added + ' 件 ／ 更新 ' + r.updated + ' 件');
 }
 
 function enableAutoSync() {
+  adminUi_();
   disableAutoSync(true);
   ScriptApp.newTrigger('syncOrders').timeBased().everyMinutes(5).create();
   SpreadsheetApp.getUi().alert('5分ごとの自動取り込みをオンにしました。');
 }
 
 function disableAutoSync(silent) {
+  const ui = adminUi_();
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'syncOrders') ScriptApp.deleteTrigger(t);
   });
-  if (silent !== true) SpreadsheetApp.getUi().alert('自動取り込みをオフにしました。');
+  if (silent !== true) ui.alert('自動取り込みをオフにしました。');
 }
 
 // ===================== カラーミー連携（OAuth） =====================
@@ -568,8 +615,7 @@ function handleOAuthCallback_(code) {
       msg = '連携に失敗しました：' + e.message;
     }
   }
-  return HtmlService.createHtmlOutput('<p style="font-family:sans-serif;font-size:16px;padding:24px">' +
-    msg.replace(/</g, '&lt;') + '</p>').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  return textOut_(msg);   // HTMLページは返さない（doGet の説明を参照）
 }
 
 function colormeTest() {
@@ -600,12 +646,14 @@ function staffKey_() {
 }
 
 function resetStaffKey() {
+  adminUi_();
   props_().deleteProperty('STAFF_KEY');
   staffKey_();
   SpreadsheetApp.getUi().alert('合言葉を作り直しました。これまでのスキャン用URLは使えなくなります。［URLを表示］で新しいURLを確認してください。');
 }
 
 function showUrls() {
+  adminUi_();
   const url = webAppUrl_();
   if (!url) { SpreadsheetApp.getUi().alert('先にWebアプリとしてデプロイしてください。'); return; }
   const k = staffKey_();
@@ -648,30 +696,43 @@ function checkStaffKey_(k) {
 
 // ===================== Webアプリ =====================
 
+/**
+ * ウェブアプリの入口。
+ * 【セキュリティ】HtmlService のページを返すと、そのページから google.script.run で
+ * このファイルの公開関数（名前が _ で終わらない関数）を誰でも呼べてしまう。
+ * お客様ページ・スキャン画面は GitHub Pages にあるので、ここでは文字（JSONP・テキスト）だけを返す。
+ */
 function doGet(e) {
   const p = (e && e.parameter) || {};
   if (p.code && !p.p) return handleOAuthCallback_(p.code);
   if (p.p === 'offline_list' || p.p === 'offline_push') return offlineApi_(p);
   if (p.p === 'ticket_lookup') return ticketApi_(p);
   if (p.p === 'staff_api') return staffApi_(p);
+  if (p.p === 'staff') return textOut_('スキャン画面は GitHub Pages に移りました。管理シートの［URLを表示］のQRコードから開いてください。');
+  return textOut_('引換券ページはこちらです：https://narabrewing2018.github.io/nara-ticket/');
+}
 
-  const cfg = getConfig_();
-  if (p.p === 'staff') {
-    if (!checkStaffKey_(p.k)) {
-      return HtmlService.createHtmlOutput('<p style="font-family:sans-serif;padding:24px">URLが正しくありません。</p>');
-    }
-    return htmlTemplate_('Staff', {
-      bootJson: jsonForHtml_({ key: p.k, terminal: String(p.t || '').slice(0, 20), eventName: cfg.eventName, offlineUrl: offlinePageUrl_() }),
-    }).setTitle('引換スキャン' + (p.t ? '（' + p.t + '）' : ''));
-  }
-  return htmlTemplate_('Ticket', {
-    bootJson: jsonForHtml_({ eventName: cfg.eventName, eventInfo: cfg.eventInfo, contact: cfg.contact, barcode: cfg.barcode }),
-  }).setTitle((cfg.eventName ? cfg.eventName + ' ' : '') + '引換券');
+function textOut_(s) {
+  return ContentService.createTextOutput(s).setMimeType(ContentService.MimeType.TEXT);
 }
 
 // ---------- お客様ページ ----------
 
 const NOT_FOUND_MSG = 'ご注文が見つかりませんでした。ご注文番号とメールアドレスをご確認ください。（ご注文直後の場合は数分おいてお試しください）';
+const BUSY_MSG = 'ただいま混み合っています。1分ほどおいてからお試しください。';
+
+// 大量アクセス対策（1分あたり。全体の合計）
+const LIVE_FETCH_PER_MIN = 30;   // 引換券ページからカラーミーAPIに問い合わせる回数の上限
+const FAIL_PER_MIN = 60;         // 見つからなかった照会がこれを超えたら、その1分はシートも読まずに「混み合っています」と返す
+
+/** 1分ごとのカウンター（CacheService。厳密ではないが、上限の目安として十分） */
+function minuteCount_(name, add) {
+  const cache = CacheService.getScriptCache();
+  const key = name + '_' + Math.floor(Date.now() / 60000);
+  const n = Number(cache.get(key) || 0);
+  if (add) cache.put(key, String(n + add), 120);
+  return n;
+}
 
 /** 注文番号＋メールアドレスで引換券を取得（お客様ページから呼ばれる） */
 function lookupTicket(orderInput, mailInput) {
@@ -680,6 +741,9 @@ function lookupTicket(orderInput, mailInput) {
   if (!order || order.length > 15 || mail.indexOf('@') < 1) {
     return { ok: false, message: 'ご注文番号（数字）とメールアドレスを入力してください。' };
   }
+
+  // 大量アクセス対策：見つからない照会が全体で多すぎる間は、シートを読まずにすぐ返す
+  if (minuteCount_('fail') >= FAIL_PER_MIN) return { ok: false, message: BUSY_MSG };
 
   // 総当たり対策：同じ注文番号で10分に10回まで
   const cache = CacheService.getScriptCache();
@@ -690,16 +754,25 @@ function lookupTicket(orderInput, mailInput) {
   const cfg = getConfig_();
   let rec = findByOrder_(order);
 
-  // 未登録、または入金待ちの場合はカラーミーに直接確認する
-  if (!rec || rec.v[COL.STATUS] === STATUS.UNPAID) {
-    let sale = null;
-    try { sale = getSale_(order); } catch (e) { console.error(e); }
-    const info = sale ? voucherInfo_(sale, cfg.productIds) : null;
-    if (info && normMail_(info.mail) === mail) rec = upsertFromInfo_(info, cfg);
+  // 未登録、または入金待ちの場合はカラーミーに直接確認する（販売期間中だけ）
+  // ・「設定」で照会をオフにしていれば問い合わせない（販売終了後〜当日）
+  // ・引換券を含まないと確認済みの受注（取込済み受注）は問い合わせない
+  // ・問い合わせは全体で1分に LIVE_FETCH_PER_MIN 回まで。超えたら「混み合っています」
+  if ((!rec || rec.v[COL.STATUS] === STATUS.UNPAID) && cfg.liveLookup && !readSeen_()[order]) {
+    if (minuteCount_('live') >= LIVE_FETCH_PER_MIN) {
+      if (!rec) { minuteCount_('fail', 1); return { ok: false, message: BUSY_MSG }; }
+    } else {
+      minuteCount_('live', 1);
+      let sale = null;
+      try { sale = getSale_(order); } catch (e) { console.error(e); }
+      const info = sale ? voucherInfo_(sale, cfg.productIds) : null;
+      if (info && normMail_(info.mail) === mail) rec = upsertFromInfo_(info, cfg);
+    }
   }
 
   if (!rec || normMail_(rec.v[COL.MAIL]) !== mail) {
     cache.put(ck, String(tries + 1), 600);
+    minuteCount_('fail', 1);
     return { ok: false, message: NOT_FOUND_MSG };
   }
 
@@ -854,6 +927,7 @@ function getStats(key) {
 function buildPrintList() {
   // 紙の控え：PCもスキャナも使えないときに、この紙で照合する。受注番号順・1冊
   // 照合したら［済］に✓、引換時刻（時:分）と担当者の名前（1文字でよい）を書く。後でシステムに入力し直す
+  adminUi_();
   const ss = SpreadsheetApp.getActive();
   const cfg = getConfig_();
   const tickets = readTickets_()
@@ -861,7 +935,7 @@ function buildPrintList() {
     .sort(function (a, b) { return Number(a.v[COL.ORDER]) - Number(b.v[COL.ORDER]); });
   const rows = tickets.map(function (r) {
     const used = r.v[COL.STATUS] === STATUS.USED;
-    return [used ? '済' : '□', r.v[COL.ORDER], r.v[COL.NAME], qtyLabel_(r.v[COL.QTY]),
+    return [used ? '済' : '□', r.v[COL.ORDER], cellSafe_(r.v[COL.NAME]), qtyLabel_(r.v[COL.QTY]),
       String(r.v[COL.CODE]).slice(-4), used ? fmt_(r.v[COL.USED_AT], 'HH:mm') : '', used ? '(' + r.v[COL.TERMINAL] + ')' : ''];
   });
   const sets = tickets.reduce(function (n, r) { return n + (Number(r.v[COL.QTY]) || 0); }, 0);
