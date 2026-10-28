@@ -254,7 +254,15 @@
 
   // ---------- フォーカス維持（手入力欄・ボタン操作中は除く） ----------
   // iPhone はタップ以外でカーソルを入れられないため、カーソルがなくても下の「画面全体で受け取る」で読み取れる
-  function focusScan() { $('scan').focus(); }
+  // iPhone・iPad：スキャン欄にカーソルを入れない。カーソルがあると、日本語入力が有効なときにスキャナの数字が
+  // 変換候補に入り、Enter が「確定」に使われて番号が二重・欠けになる（2026-10-28 確認）。カーソルがなくても画面全体で受け取れる
+  var IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  function scanLocked() { return IOS; }   // スキャン欄に直接入力させない状態
+  function focusScan() { if (!scanLocked()) $('scan').focus(); }
+  if (IOS) {
+    $('scan').readOnly = true; $('scan').setAttribute('tabindex', '-1');
+    $('scan').addEventListener('focus', function () { $('scan').blur(); });
+  }
   function isOtherField(el) {
     return !!el && el !== $('scan') && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
   }
@@ -300,7 +308,7 @@
   document.addEventListener('keydown', function (e) {
     if (!$('start').classList.contains('hidden')) return;
     var t = e.target;
-    if (t === $('scan') || isOtherField(t) || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+    if ((t === $('scan') && !scanLocked()) || isOtherField(t) || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
     if (e.key === 'Enter') {
       // スキャナの Enter で、カーソルのあるボタン（［取消］など）が押されないようにする
       if ($('scan').value.trim() || Date.now() - lastDigitAt < 300) { e.preventDefault(); e.stopPropagation(); submitScan(); }

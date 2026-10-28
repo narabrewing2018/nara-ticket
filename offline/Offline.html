@@ -642,7 +642,18 @@
   // 読み取りが途中で切れて数字が残ったら、2秒後に消して知らせる（次のスキャンとつながらないように）。
   // ［手入力］中と、キーボードで打っているとき（1文字ごとに間があく）は消さない。
   var idleTimer = null, staleTimer = null, STALE_MS = 2000, lastInputAt = 0, manualInput = false, lastDigitAt = 0;
-  function focusScan() { if ($('dlg').classList.contains('hidden') && $('setup').classList.contains('hidden')) $('scan').focus(); }
+  // iPhone・iPad：スキャン欄にカーソルを入れない。カーソルがあると、日本語入力が有効なときにスキャナの数字が
+  // 変換候補に入り、Enter が「確定」に使われて番号が二重・欠けになる（2026-10-28 確認）。カーソルがなくても画面全体で受け取れる
+  var IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  function scanLocked() { return IOS && !typing; }   // ［手入力］中だけ、スキャン欄に直接打てる
+  function focusScan() { if (!scanLocked() && $('dlg').classList.contains('hidden') && $('setup').classList.contains('hidden')) $('scan').focus(); }
+  function applyLock() {
+    var lock = scanLocked();
+    $('scan').readOnly = lock;
+    if (lock) { $('scan').setAttribute('tabindex', '-1'); if (document.activeElement === $('scan')) $('scan').blur(); }
+    else $('scan').removeAttribute('tabindex');
+  }
+  $('scan').addEventListener('focus', function () { if (scanLocked()) $('scan').blur(); });
   function isOtherField(el) {
     return !!el && el !== $('scan') && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
   }
@@ -685,7 +696,7 @@
   // ほかの入力欄（手入力で探す・設定）で文字を打っているときは、その欄に入る。
   document.addEventListener('keydown', function (e) {
     var t = e.target;
-    if (t === $('scan') || isOtherField(t) || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+    if ((t === $('scan') && !scanLocked()) || isOtherField(t) || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
     var isDigit = e.key && e.key.length === 1 && /[0-9０-９]/.test(e.key);
     var blocked = !$('start').classList.contains('hidden') || !$('setup').classList.contains('hidden') || !$('dlg').classList.contains('hidden');
     if (blocked) {
@@ -717,10 +728,12 @@
     // スマホはキーボードを出さない（スキャナの入力だけ受ける）。手入力のときだけ数字キーボードを出す
     if (TOUCH) $('scan').setAttribute('inputmode', on ? 'numeric' : 'none');
     $('scan').placeholder = on ? '受注番号9桁／コード12桁' : '';
-    // iPhone はタップの操作の中で focus しないとキーボードが出ないので、同期で付け直す
-    $('scan').blur(); $('scan').focus();
+    applyLock();
+    // iPhone はタップの操作の中で focus しないとキーボードが出ないので、同期で付け直す（スキャンに戻るときは外す）
+    $('scan').blur(); if (!scanLocked()) $('scan').focus();
   }
   $('typeBtn').addEventListener('click', function () { setTyping(!typing); });
+  applyLock();
   if (TOUCH) {
     $('scan').setAttribute('inputmode', 'none');
     $('scanLabel').textContent = 'ここにスキャン（タップ不要。読めないときは［手入力］で受注番号9桁か引換コード12桁を入れて［照合］）';
