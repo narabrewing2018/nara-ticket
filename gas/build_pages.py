@@ -7,7 +7,8 @@ CONFIG = """  // ===== 設定（ここだけ書き換える） =====
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbwOZQWB0Kn6lH4wSaknhrFCGK9XzX4omndBeGo65lycxzZCMKBH9kACFQehWMR3XFSJ/exec';
   var BOOT = {
     eventName: 'twilight 缶ビール引換券',
-    eventInfo: '2026年11月8日（日）12:00〜18:00　日本武道館 奈良醸造ブース',
+    eventInfo: '2026年11月8日（日）終演後　日本武道館横　奈良醸造ブース',
+    eventNotes: ['開演前のお渡しはできません。ご了承ください。', '終演後は速やかにブースにお越しください。'],
     contact: 'shop@narabrewing.com',
     barcode: 'CODE128'
   };

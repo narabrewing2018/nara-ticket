@@ -19,6 +19,9 @@
   .brand { font-size: 12px; letter-spacing: .18em; color: var(--muted); }
   h1 { font-size: 21px; margin: 4px 0 0; line-height: 1.4; }
   .sub { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .enotes { font-size: 13px; font-weight: 700; color: var(--accent); margin-top: 6px; line-height: 1.6; }
+  .info .enotes { text-align: left; margin-top: 4px; }
+  .sub, .einfo { word-break: keep-all; overflow-wrap: anywhere; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px 18px; }
   label { display: block; font-size: 13px; font-weight: 600; margin: 0 0 6px; }
   input {
@@ -71,12 +74,13 @@
     <div class="brand">NARA BREWING CO.</div>
     <h1 id="h-event">引換券</h1>
     <div class="sub" id="h-info"></div>
+    <div class="enotes" id="h-notes"></div>
   </header>
 
   <!-- 入力フォーム -->
   <div class="card" id="form-card">
     <form id="f" novalidate>
-      <label for="order">ご注文番号</label>
+      <label for="order">受注番号</label>
       <input id="order" inputmode="numeric" autocomplete="off" placeholder="例：123456789">
       <div class="hint">ご注文時のメールに記載の「受注番号」です</div>
       <label for="mail">ご注文時のメールアドレス</label>
@@ -117,6 +121,11 @@
   // 見出し
   if (BOOT.eventName) { $('h-event').textContent = BOOT.eventName; }
   $('h-info').textContent = BOOT.eventInfo || '';
+  // 会場・時間の注意（※ 付きで見出しの下とバーコード画面に出す）
+  function notesHtml() {
+    return (BOOT.eventNotes || []).map(function (n) { return '※' + esc(n); }).join('<br>');
+  }
+  $('h-notes').innerHTML = notesHtml();
   $('foot').innerHTML = '奈良醸造株式会社' + (BOOT.contact ? '<br>お問い合わせ：' + esc(BOOT.contact) : '');
 
   function setBusy(b) {
@@ -148,7 +157,7 @@
     e.preventDefault();
     var o = toHalf($('order').value).replace(/\D/g, '');
     var m = toHalf($('mail').value).trim();
-    if (!o || m.indexOf('@') < 1) { showError('ご注文番号とメールアドレスを入力してください。'); return; }
+    if (!o || m.indexOf('@') < 1) { showError('受注番号とメールアドレスを入力してください。'); return; }
     lookup(o, m);
   });
 
@@ -192,7 +201,8 @@
         '<p class="bright">画面の明るさを最大にしてご提示ください</p>' +
         '<p class="shot"><b>今のうちにスクリーンショットを撮っておいてください。</b><br>会場では電波がつながりにくく、この画面を開けないことがあります。スクリーンショットでも引換できます。</p>' +
         metaHtml(r) +
-        (BOOT.eventInfo ? '<div class="info">' + esc(BOOT.eventInfo) + '</div>' : '') +
+        (BOOT.eventInfo ? '<div class="info"><span class="einfo">' + esc(BOOT.eventInfo) + '</span>' +
+          ((BOOT.eventNotes || []).length ? '<div class="enotes">' + notesHtml() + '</div>' : '') + '</div>' : '') +
         '<ul class="notes">' +
         '<li>会場の引換所でこの画面をご提示ください。画面を明るくしていただくと読み取りが早くなります。</li>' +
         '<li>スクリーンショットが出せないときは、注文受付メールの受注番号（9桁）をお見せください。</li>' +
